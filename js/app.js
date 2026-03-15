@@ -47,6 +47,8 @@ const state = {
   runtimeMode: MOCK_MODE ? "mock" : "discord",
   runtimeNote: MOCK_MODE ? "Tarayıcı önizleme modu" : "Discord Activity başlatılıyor...",
   scopeKey: "local-preview",
+  messageSyncHandle: null,
+  composerDraft: "",
   currentUser: {
     id: "local-user",
     username: "31check",
@@ -130,6 +132,7 @@ async function initializeRuntime() {
   if (MOCK_MODE) {
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
     await loadPersistedMessages();
+    startMessageSync();
     render();
     return;
   }
@@ -149,6 +152,7 @@ async function initializeRuntime() {
     await hydrateGuildMember(auth);
     await hydrateParticipants();
     await loadPersistedMessages();
+    startMessageSync();
     render();
     renderUserModal();
   } catch (error) {
@@ -158,6 +162,7 @@ async function initializeRuntime() {
     state.scopeKey = "local-preview";
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
     await loadPersistedMessages();
+    startMessageSync();
     render();
   }
 }
@@ -290,7 +295,43 @@ async function loadPersistedMessages() {
   if (!response.ok) return;
 
   const payload = await response.json();
-  state.messagesByChannel = mergeMessages(payload.channels || {});
+  syncRemoteMessages(payload.channels || {});
+}
+
+function startMessageSync() {
+  stopMessageSync();
+  if (!state.scopeKey) return;
+
+  state.messageSyncHandle = window.setInterval(() => {
+    void loadPersistedMessages();
+  }, 2500);
+
+  document.addEventListener("visibilitychange", handleVisibilitySync);
+}
+
+function stopMessageSync() {
+  if (state.messageSyncHandle) {
+    window.clearInterval(state.messageSyncHandle);
+    state.messageSyncHandle = null;
+  }
+
+  document.removeEventListener("visibilitychange", handleVisibilitySync);
+}
+
+function handleVisibilitySync() {
+  if (document.visibilityState === "visible") {
+    void loadPersistedMessages();
+  }
+}
+
+function syncRemoteMessages(channels) {
+  const nextMessages = mergeMessages(channels);
+  const previousSnapshot = JSON.stringify(state.messagesByChannel);
+  const nextSnapshot = JSON.stringify(nextMessages);
+  if (previousSnapshot === nextSnapshot) return;
+
+  state.messagesByChannel = nextMessages;
+  render();
 }
 
 function render() {
@@ -339,7 +380,7 @@ function render() {
             <div class="quick-actions" id="actionButtons">${renderActionButtons()}</div>
             <form class="composer" id="composerForm">
               <button type="button" class="icon-muted" id="openAdminButton" aria-label="Admin">${icon("plus", 24)}</button>
-              <input id="composerInput" type="text" placeholder="${escapeAttr((channel?.name || "") + " kanalına mesaj gönder")}" autocomplete="off">
+              <input id="composerInput" type="text" value="${escapeAttr(state.composerDraft)}" placeholder="${escapeAttr((channel?.name || "") + " kanalına mesaj gönder")}" autocomplete="off">
               <button type="submit" class="btn btn-primary composer-send">Gönder</button>
               <div class="composer-actions">
                 <button type="button" class="icon-muted">${icon("gift", 20)}</button>
@@ -475,11 +516,15 @@ function bindRuntimeUi() {
 
   const form = document.getElementById("composerForm");
   const input = document.getElementById("composerInput");
+  input.addEventListener("input", () => {
+    state.composerDraft = input.value;
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const value = input.value.trim();
     if (!value) return;
     input.value = "";
+    state.composerDraft = "";
     await submitMessage(value);
   });
 
@@ -678,11 +723,15 @@ async function persistMessage(message) {
   if (!channel) return;
 
   try {
-    await fetch("/api/messages", {
+    const response = await fetch("/api/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scopeKey: state.scopeKey, channelId: channel.id, message })
     });
+    if (!response.ok) {
+      throw new Error("Message persistence request failed.");
+    }
+    await loadPersistedMessages();
   } catch (error) {
     console.warn("Message persistence failed.", error);
   }
