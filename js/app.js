@@ -49,6 +49,7 @@ const state = {
   scopeKey: "local-preview",
   messageSyncHandle: null,
   composerDraft: "",
+  searchQuery: "",
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
   forceScrollToBottom: false,
@@ -362,9 +363,10 @@ function render() {
   }
 
   const shouldRestoreComposerFocus = document.activeElement?.id === "composerInput" || state.keepComposerFocus;
+  const shouldRestoreSearchFocus = document.activeElement?.id === "messageSearchInput";
   const shouldStickToBottom = state.messagePanePinnedToBottom || state.forceScrollToBottom;
   const channel = selectedChannel();
-  const messages = state.messagesByChannel[channel?.id] || [];
+  const messages = filterMessages(state.messagesByChannel[channel?.id] || [], state.searchQuery);
 
   app.className = "app";
   app.innerHTML = `
@@ -396,13 +398,13 @@ function render() {
               <button type="button" class="icon-muted" aria-label="Pin">${icon("pin", 20)}</button>
               <button type="button" class="icon-muted" aria-label="Üyeler">${icon("users", 20)}</button>
               <label class="search" aria-label="Ara">
-                <input type="text" placeholder="Ara">
+                <input id="messageSearchInput" type="text" value="${escapeAttr(state.searchQuery)}" placeholder="Mesajlarda ara">
                 ${icon("search", 16)}
               </label>
             </div>
           </header>
           <div class="messages">
-            ${messages.length ? renderMessages(messages) : '<div class="empty-state">Bu kanalda henüz mesaj yok. İlk mesajı gönderin!</div>'}
+            ${messages.length ? renderMessages(messages) : renderEmptyMessageState(channel)}
           </div>
           <div class="composer-wrap">
             <div class="quick-actions" id="actionButtons">${renderActionButtons()}</div>
@@ -428,6 +430,9 @@ function render() {
   bindRuntimeUi();
   if (shouldRestoreComposerFocus) {
     focusComposer();
+  }
+  if (shouldRestoreSearchFocus) {
+    focusSearch();
   }
   if (shouldStickToBottom) {
     scrollMessagesToBottom();
@@ -551,10 +556,17 @@ function bindRuntimeUi() {
 
   const form = document.getElementById("composerForm");
   const input = document.getElementById("composerInput");
+  const searchInput = document.getElementById("messageSearchInput");
   const messagesPane = document.querySelector(".messages");
   if (messagesPane) {
     messagesPane.addEventListener("scroll", () => {
       state.messagePanePinnedToBottom = isNearBottom(messagesPane);
+    });
+  }
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      state.searchQuery = searchInput.value;
+      render();
     });
   }
   input.addEventListener("input", () => {
@@ -894,6 +906,19 @@ function focusComposer() {
   state.keepComposerFocus = false;
 }
 
+function focusSearch() {
+  const input = document.getElementById("messageSearchInput");
+  if (!input) return;
+
+  input.focus();
+  const cursor = input.value.length;
+  try {
+    input.setSelectionRange(cursor, cursor);
+  } catch {
+    // Selection APIs are best-effort in embedded browsers.
+  }
+}
+
 function scrollMessagesToBottom() {
   const pane = document.querySelector(".messages");
   if (!pane) return;
@@ -924,6 +949,30 @@ function sortMessages(messages) {
     if (timeDiff !== 0) return timeDiff;
     return String(left.id || "").localeCompare(String(right.id || ""));
   });
+}
+
+function filterMessages(messages, query) {
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
+  if (!normalizedQuery) {
+    return messages;
+  }
+
+  return messages.filter((message) => {
+    const haystack = [
+      message.author,
+      message.content,
+      message.type
+    ].join(" ").toLocaleLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
+}
+
+function renderEmptyMessageState(channel) {
+  if (state.searchQuery.trim()) {
+    return `<div class="empty-state">"${escapeHtml(state.searchQuery)}" icin bu kanalda sonuc bulunamadi.</div>`;
+  }
+
+  return `<div class="empty-state">${escapeHtml(channel?.name || "Bu kanalda")} icin henuz mesaj yok. Ilk mesaji gonderin!</div>`;
 }
 
 function normalizeMessageTimestamp(message) {
