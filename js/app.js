@@ -27,6 +27,13 @@ const DEFAULT_MEMBERS = [
   { id: uid(), username: "Burak", avatar: "Burak", status: "offline", customStatus: "" }
 ];
 
+const GAME_BUTTONS = [
+  { id: "blackjack", label: "🃏 Blackjack", game: "blackjack" },
+  { id: "mines", label: "💣 Mines", game: "mines" },
+  { id: "dice", label: "🎲 Zar", game: "dice" },
+  { id: "case", label: "🎁 Kasa", game: "case" }
+];
+
 const FALLBACK_MESSAGE = {
   id: uid(),
   author: "31check",
@@ -390,7 +397,6 @@ function render() {
             </div>
             <div class="chat-header-right">
               <button type="button" class="icon-muted" aria-label="Bildirim">${icon("bell", 20)}</button>
-              <button type="button" class="icon-muted" aria-label="Pin">${icon("pin", 20)}</button>
               <label class="search" aria-label="Ara">
                 <input id="messageSearchInput" type="text" value="${escapeAttr(state.searchQuery)}" placeholder="Mesajlarda ara">
                 ${icon("search", 16)}
@@ -401,6 +407,7 @@ function render() {
             ${messages.length ? renderMessages(messages) : renderEmptyMessageState(channel)}
           </div>
           <div class="composer-wrap">
+            <div class="quick-actions">${renderGameButtons()}</div>
             <form class="composer" id="composerForm">
               <input id="composerInput" type="text" value="${escapeAttr(state.composerDraft)}" placeholder="${escapeAttr((channel?.name || "") + " kanalına mesaj gönder")}" autocomplete="off">
               <button type="submit" class="btn btn-primary composer-send">Gönder</button>
@@ -497,6 +504,10 @@ function renderMembers() {
   }).join("");
 }
 
+function renderGameButtons() {
+  return GAME_BUTTONS.map((button) => `<button type="button" data-game-id="${button.game}">${escapeHtml(button.label)}</button>`).join("");
+}
+
 function renderMemberRow(member) {
   return `<div class="member">
       <div class="member-avatar-wrap">
@@ -523,6 +534,14 @@ function bindRuntimeUi() {
   if (userButton && state.currentUser.isAdmin) {
     userButton.addEventListener("click", openUserModal);
   }
+  app.querySelectorAll("[data-game-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const gameId = button.dataset.gameId;
+      const config = GAME_BUTTONS.find((item) => item.game === gameId);
+      if (!config) return;
+      await sendGameMessage(config.game, config.label);
+    });
+  });
 
   const form = document.getElementById("composerForm");
   const input = document.getElementById("composerInput");
