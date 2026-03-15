@@ -286,11 +286,21 @@ function syncParticipants(participants) {
 }
 
 async function loadPersistedMessages() {
-  const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}`);
-  if (!response.ok) return;
+  const localChannels = readBrowserMessages();
+  let remoteChannels = {};
 
-  const payload = await response.json();
-  state.messagesByChannel = mergeMessages(payload.channels || {});
+  try {
+    const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}`);
+    if (response.ok) {
+      const payload = await response.json();
+      remoteChannels = payload.channels || {};
+    }
+  } catch (error) {
+    console.warn("Message fetch failed, using browser cache.", error);
+  }
+
+  state.messagesByChannel = mergeMessages(remoteChannels, localChannels);
+  syncBrowserMessages();
 }
 
 function render() {
@@ -665,6 +675,7 @@ function appendLocalMessage(message) {
 
   state.messagesByChannel[channel.id] ||= [];
   state.messagesByChannel[channel.id].push(message);
+  syncBrowserMessages();
   render();
 
   requestAnimationFrame(() => {
@@ -777,10 +788,47 @@ function buildEmptyMessageState() {
 
 function mergeMessages(channels) {
   const merged = buildEmptyMessageState();
-  for (const [channelId, list] of Object.entries(channels)) {
-    merged[channelId] = Array.isArray(list) ? list : [];
+  for (const source of arguments) {
+    for (const [channelId, list] of Object.entries(source || {})) {
+      const current = merged[channelId] || [];
+      const next = Array.isArray(list) ? list : [];
+      merged[channelId] = dedupeChannelMessages([...current, ...next]);
+    }
   }
   return merged;
+}
+
+function browserStorageKey() {
+  return `31check:messages:${state.scopeKey}`;
+}
+
+function readBrowserMessages() {
+  try {
+    const raw = window.localStorage.getItem(browserStorageKey());
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function syncBrowserMessages() {
+  try {
+    window.localStorage.setItem(browserStorageKey(), JSON.stringify(state.messagesByChannel));
+  } catch (error) {
+    console.warn("Could not write browser message cache.", error);
+  }
+}
+
+function dedupeChannelMessages(messages) {
+  const seen = new Map();
+  for (const message of messages) {
+    if (message?.id) {
+      seen.set(message.id, message);
+    }
+  }
+  return [...seen.values()];
 }
 
 function syncUserTag() {
