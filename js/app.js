@@ -50,6 +50,8 @@ const state = {
   messageSyncHandle: null,
   composerDraft: "",
   keepComposerFocus: false,
+  messagePanePinnedToBottom: true,
+  forceScrollToBottom: false,
   pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
     id: "local-user",
@@ -308,7 +310,7 @@ function startMessageSync() {
 
   state.messageSyncHandle = window.setInterval(() => {
     void loadPersistedMessages();
-  }, 2500);
+  }, 1000);
 
   document.addEventListener("visibilitychange", handleVisibilitySync);
 }
@@ -339,7 +341,7 @@ function syncRemoteMessages(channels) {
     const stillPending = pendingList.filter((message) => !remoteIds.has(message.id));
 
     if (stillPending.length) {
-      nextMessages[channelId] = [...(nextMessages[channelId] || []), ...stillPending];
+      nextMessages[channelId] = sortMessages([...(nextMessages[channelId] || []), ...stillPending]);
     }
 
     state.pendingMessagesByChannel[channelId] = stillPending;
@@ -354,7 +356,13 @@ function syncRemoteMessages(channels) {
 }
 
 function render() {
+  const previousMessagesPane = document.querySelector(".messages");
+  if (previousMessagesPane) {
+    state.messagePanePinnedToBottom = isNearBottom(previousMessagesPane);
+  }
+
   const shouldRestoreComposerFocus = document.activeElement?.id === "composerInput" || state.keepComposerFocus;
+  const shouldStickToBottom = state.messagePanePinnedToBottom || state.forceScrollToBottom;
   const channel = selectedChannel();
   const messages = state.messagesByChannel[channel?.id] || [];
 
@@ -421,6 +429,10 @@ function render() {
   if (shouldRestoreComposerFocus) {
     focusComposer();
   }
+  if (shouldStickToBottom) {
+    scrollMessagesToBottom();
+  }
+  state.forceScrollToBottom = false;
 }
 
 function renderChannelSections() {
@@ -468,7 +480,7 @@ function renderMessages(messages) {
           <div class="message-meta">
             <span class="message-author">${escapeHtml(message.author)}</span>
             <span class="verified">${icon("verified", 16)}</span>
-            <span class="message-time">${escapeHtml(message.time)}</span>
+            <span class="message-time">${escapeHtml(formatMessageTime(message))}</span>
           </div>
           <div class="message-text">${escapeHtml(message.content)}</div>
         </div>
@@ -539,6 +551,12 @@ function bindRuntimeUi() {
 
   const form = document.getElementById("composerForm");
   const input = document.getElementById("composerInput");
+  const messagesPane = document.querySelector(".messages");
+  if (messagesPane) {
+    messagesPane.addEventListener("scroll", () => {
+      state.messagePanePinnedToBottom = isNearBottom(messagesPane);
+    });
+  }
   input.addEventListener("input", () => {
     state.composerDraft = input.value;
   });
@@ -733,15 +751,11 @@ function appendLocalMessage(message) {
   if (!channel) return;
 
   state.pendingMessagesByChannel[channel.id] ||= [];
-  state.pendingMessagesByChannel[channel.id].push(message);
+  state.pendingMessagesByChannel[channel.id] = sortMessages([...(state.pendingMessagesByChannel[channel.id] || []), message]);
   state.messagesByChannel[channel.id] ||= [];
-  state.messagesByChannel[channel.id].push(message);
+  state.messagesByChannel[channel.id] = sortMessages([...(state.messagesByChannel[channel.id] || []), message]);
+  state.forceScrollToBottom = true;
   render();
-
-  requestAnimationFrame(() => {
-    const list = document.querySelector(".messages");
-    if (list) list.scrollTop = list.scrollHeight;
-  });
 }
 
 async function persistMessage(message) {
@@ -774,7 +788,6 @@ function makeMessage({ type, content }) {
     avatarUrl: state.currentUser.avatarUrl,
     createdAt: new Date(createdAtMs).toISOString(),
     createdAtMs,
-    time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
     type,
     content
   };
@@ -858,7 +871,7 @@ function buildEmptyMessageState() {
 function mergeMessages(channels) {
   const merged = buildEmptyMessageState();
   for (const [channelId, list] of Object.entries(channels)) {
-    merged[channelId] = Array.isArray(list) ? list : [];
+    merged[channelId] = Array.isArray(list) ? sortMessages(list) : [];
   }
   return merged;
 }
@@ -879,6 +892,57 @@ function focusComposer() {
     // Selection APIs are best-effort in embedded browsers.
   }
   state.keepComposerFocus = false;
+}
+
+function scrollMessagesToBottom() {
+  const pane = document.querySelector(".messages");
+  if (!pane) return;
+  pane.scrollTop = pane.scrollHeight;
+}
+
+function isNearBottom(element) {
+  if (!element) return true;
+  const threshold = 24;
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
+
+function formatMessageTime(message) {
+  const timestamp = normalizeMessageTimestamp(message);
+  if (!timestamp) {
+    return message?.time || "";
+  }
+
+  return new Date(timestamp).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function sortMessages(messages) {
+  return [...messages].sort((left, right) => {
+    const timeDiff = normalizeMessageTimestamp(left) - normalizeMessageTimestamp(right);
+    if (timeDiff !== 0) return timeDiff;
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
+}
+
+function normalizeMessageTimestamp(message) {
+  const serverCreatedAtMs = Number(message?.serverCreatedAtMs);
+  if (Number.isFinite(serverCreatedAtMs) && serverCreatedAtMs > 0) {
+    return serverCreatedAtMs;
+  }
+
+  const createdAtMs = Number(message?.createdAtMs);
+  if (Number.isFinite(createdAtMs) && createdAtMs > 0) {
+    return createdAtMs;
+  }
+
+  const parsed = Date.parse(String(message?.createdAt || ""));
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+
+  return 0;
 }
 
 function renderAvatar(avatarUrl, label) {

@@ -22,7 +22,12 @@ export async function listScopeChannels(scopeKey) {
 }
 
 export async function appendMessage(scopeKey, channelId, message) {
-  const normalizedMessage = normalizeMessage(message);
+  const serverCreatedAtMs = Number(message?.serverCreatedAtMs) || Date.now();
+  const normalizedMessage = normalizeMessage({
+    ...message,
+    serverCreatedAt: message?.serverCreatedAt || new Date(serverCreatedAtMs).toISOString(),
+    serverCreatedAtMs
+  });
 
   if (process.env.BLOB_READ_WRITE_TOKEN) {
     try {
@@ -273,17 +278,20 @@ function sortAndDedupeMessages(messages) {
 }
 
 function compareMessages(left, right) {
-  const createdDiff = normalizeCreatedAtMs(left) - normalizeCreatedAtMs(right);
+  const createdDiff = normalizeSortTimestamp(left) - normalizeSortTimestamp(right);
   if (createdDiff !== 0) return createdDiff;
   return String(left.id).localeCompare(String(right.id));
 }
 
 function normalizeMessage(message) {
   const createdAtMs = normalizeCreatedAtMs(message);
+  const serverCreatedAtMs = normalizeServerCreatedAtMs(message, createdAtMs);
   return {
     ...message,
     createdAt: message?.createdAt || new Date(createdAtMs).toISOString(),
-    createdAtMs
+    createdAtMs,
+    serverCreatedAt: message?.serverCreatedAt || new Date(serverCreatedAtMs).toISOString(),
+    serverCreatedAtMs
   };
 }
 
@@ -301,12 +309,30 @@ function normalizeCreatedAtMs(message) {
   return Date.now();
 }
 
+function normalizeServerCreatedAtMs(message, fallbackMs = Date.now()) {
+  const numeric = Number(message?.serverCreatedAtMs);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric;
+  }
+
+  const parsed = Date.parse(String(message?.serverCreatedAt || ""));
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+
+  return fallbackMs;
+}
+
+function normalizeSortTimestamp(message) {
+  return normalizeServerCreatedAtMs(message, normalizeCreatedAtMs(message));
+}
+
 function buildMessageScopePrefix(scopeKey) {
   return `${messageBlobBasePath}/${encodePathSegment(scopeKey)}/`;
 }
 
 function buildMessageBlobPath(scopeKey, channelId, message) {
-  const timestamp = String(normalizeCreatedAtMs(message)).padStart(13, "0");
+  const timestamp = String(normalizeSortTimestamp(message)).padStart(13, "0");
   return `${buildMessageScopePrefix(scopeKey)}${encodePathSegment(channelId)}/${timestamp}-${encodePathSegment(message.id)}.json`;
 }
 
