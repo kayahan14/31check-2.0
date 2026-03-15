@@ -154,6 +154,10 @@ svg { display: block; }
   font-size: 12px;
   font-weight: 600;
 }
+.avatar-image {
+  object-fit: cover;
+  background: transparent;
+}
 .user-meta, .member-meta {
   min-width: 0;
   display: flex;
@@ -291,6 +295,11 @@ svg { display: block; }
   padding: 16px;
   color: var(--text-dim);
   text-align: center;
+}
+.member-empty {
+  padding: 8px 0;
+  color: var(--text-dim);
+  font-size: 13px;
 }
 
 .composer-wrap { padding: 0 16px 24px; }

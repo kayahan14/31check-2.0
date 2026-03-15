@@ -1,4 +1,4 @@
-﻿import { DiscordSDK } from "@discord/embedded-app-sdk";
+﻿import { DiscordSDK, Events } from "@discord/embedded-app-sdk";
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const MOCK_MODE = new URLSearchParams(window.location.search).get("mock") === "1" || !DISCORD_CLIENT_ID;
@@ -36,6 +36,7 @@ const FALLBACK_MESSAGE = {
   id: uid(),
   author: "31check",
   avatar: "31check",
+  avatarUrl: "",
   time: "04:15",
   type: "text",
   content: "Peder\n\nTOPLAM 31 SÜRESİ: 11950\nTOPLAM 31 ADETİ: 273\nTEZGAH KAR/ZARAR: -888\nTOPLAM RNG: 39\nASUMAN KAR/ZARAR: 1773\nLEVEL: 236\nXP: 35\nPET: Azdırıan"
@@ -49,7 +50,11 @@ const state = {
   currentUser: {
     id: "local-user",
     username: "31check",
+    displayName: "31check",
+    tag: "@31check",
     discriminator: "0001",
+    avatarUrl: "",
+    guildId: "",
     isAdmin: true
   },
   categories: [],
@@ -136,10 +141,12 @@ async function initializeRuntime() {
     const auth = await authenticateWithDiscord();
     hydrateCurrentUser(auth);
 
-    state.scopeKey = buildScopeKey(auth);
+    state.scopeKey = buildScopeKey();
     state.runtimeMode = "discord";
     state.runtimeNote = "Discord Activity bağlı";
 
+    await subscribeDiscordEvents(auth);
+    await hydrateGuildMember(auth);
     await hydrateParticipants();
     await loadPersistedMessages();
     render();
@@ -147,7 +154,7 @@ async function initializeRuntime() {
   } catch (error) {
     console.error("Discord SDK bootstrap failed, falling back to preview mode.", error);
     state.runtimeMode = "mock";
-    state.runtimeNote = "Discord bağlanamadı, önizleme modu";
+    state.runtimeNote = `Discord bağlanamadı: ${String(error?.message || "önizleme modu")}`;
     state.scopeKey = "local-preview";
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
     await loadPersistedMessages();
@@ -159,9 +166,9 @@ async function authenticateWithDiscord() {
   const { code } = await state.discordSdk.commands.authorize({
     client_id: DISCORD_CLIENT_ID,
     response_type: "code",
-    state: "31check-activity",
+    state: `31check-activity-${Date.now()}`,
     prompt: "none",
-    scope: ["identify"]
+    scope: ["identify", "guilds", "guilds.members.read"]
   });
 
   const response = await fetch("/api/token", {
@@ -172,52 +179,110 @@ async function authenticateWithDiscord() {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || "Discord token exchange failed.");
+    throw new Error(payload.details?.error_description || payload.error || "Discord token exchange failed.");
   }
 
   const token = await response.json();
-  return state.discordSdk.commands.authenticate({ access_token: token.access_token });
+  const auth = await state.discordSdk.commands.authenticate({ access_token: token.access_token });
+  return { ...auth, access_token: token.access_token };
 }
 
 function hydrateCurrentUser(auth) {
   const user = auth?.user || {};
-  const username = user.global_name || user.username || state.currentUser.username;
+  const username = user.username || state.currentUser.username;
+  const displayName = user.global_name || username || state.currentUser.displayName;
   state.currentUser = {
+    ...state.currentUser,
     id: user.id || state.currentUser.id,
     username,
+    displayName,
+    tag: username ? `@${username}` : state.currentUser.tag,
     discriminator: user.discriminator || "0000",
+    avatarUrl: buildDiscordUserAvatarUrl(user.id, user.avatar, user.discriminator),
+    guildId: state.discordSdk?.guildId || "",
     isAdmin: true
+  };
+  syncUserTag();
+}
+
+async function subscribeDiscordEvents(auth) {
+  if (!state.discordSdk) return;
+
+  try {
+    await state.discordSdk.subscribe(Events.CURRENT_GUILD_MEMBER_UPDATE, (member) => {
+      applyGuildMemberData(member, auth?.user?.id || state.currentUser.id);
+      render();
+      renderUserModal();
+    });
+  } catch (error) {
+    console.warn("Could not subscribe to current guild member updates.", error);
+  }
+
+  try {
+    await state.discordSdk.subscribe(Events.ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE, (payload) => {
+      syncParticipants(payload?.participants || []);
+      render();
+    });
+  } catch (error) {
+    console.warn("Could not subscribe to participant updates.", error);
+  }
+}
+
+async function hydrateGuildMember(auth) {
+  const guildId = state.discordSdk?.guildId || "";
+  if (!guildId || !auth?.access_token || MOCK_MODE) return;
+
+  try {
+    const response = await fetch(`https://discord.com/api/v10/users/@me/guilds/${guildId}/member`, {
+      headers: {
+        Authorization: `Bearer ${auth.access_token}`
+      }
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.message || "Guild member fetch failed.");
+    }
+
+    const member = await response.json();
+    applyGuildMemberData(member, auth?.user?.id || state.currentUser.id);
+    render();
+    renderUserModal();
+  } catch (error) {
+    console.warn("Could not hydrate current guild member.", error);
+  }
+}
+
+function applyGuildMemberData(member, userId) {
+  if (!member || !userId) return;
+
+  const guildId = member.guild_id || state.discordSdk?.guildId || state.currentUser.guildId;
+  const nickname = member.nick || member.nickname || "";
+  const memberAvatarHash = member.avatar || "";
+
+  state.currentUser = {
+    ...state.currentUser,
+    displayName: nickname || state.currentUser.displayName || state.currentUser.username,
+    guildId,
+    avatarUrl: buildDiscordGuildAvatarUrl(guildId, userId, memberAvatarHash) || state.currentUser.avatarUrl
   };
   syncUserTag();
 }
 
 async function hydrateParticipants() {
   try {
-    const participants = await state.discordSdk.commands.getInstanceConnectedParticipants();
-    if (!Array.isArray(participants) || !participants.length) return;
-
-    state.members = participants.map((participant, index) => ({
-      id: participant.id || participant.user?.id || uid(),
-      username:
-        participant.nick ||
-        participant.nickname ||
-        participant.user?.global_name ||
-        participant.user?.username ||
-        participant.username ||
-        `Oyuncu ${index + 1}`,
-      avatar:
-        participant.nick ||
-        participant.nickname ||
-        participant.user?.global_name ||
-        participant.user?.username ||
-        participant.username ||
-        `Oyuncu ${index + 1}`,
-      status: "online",
-      customStatus: ""
-    }));
+    const result = await state.discordSdk.commands.getInstanceConnectedParticipants();
+    syncParticipants(result?.participants || []);
   } catch (error) {
     console.warn("Could not fetch connected Discord participants.", error);
   }
+}
+
+function syncParticipants(participants) {
+  if (!Array.isArray(participants)) return;
+
+  const mapped = participants.map((participant, index) => mapDiscordParticipant(participant, index));
+  state.members = mapped.length ? dedupeMembers(mapped) : [currentUserAsMember()];
 }
 
 async function loadPersistedMessages() {
@@ -241,10 +306,10 @@ function render() {
       </div>
       <div class="sidebar-footer">
         <button type="button" class="current-user" id="openUserButton">
-          <span class="avatar">${initials(state.currentUser.username)}</span>
+          ${renderAvatar(state.currentUser.avatarUrl, state.currentUser.displayName)}
           <span class="user-meta">
-            <span class="user-name">${escapeHtml(state.currentUser.username)}</span>
-            <span class="user-tag">#${escapeHtml(state.currentUser.discriminator)}</span>
+            <span class="user-name">${escapeHtml(state.currentUser.displayName)}</span>
+            <span class="user-tag">${escapeHtml(state.currentUser.tag)}</span>
           </span>
         </button>
       </div>
@@ -334,7 +399,7 @@ function renderChannelLink(channel) {
 function renderMessages(messages) {
   return `<div class="message-stack">${messages.map((message) => `
       <article class="message ${message.type === "game" ? "message-game" : ""}">
-        <span class="avatar">${initials(message.avatar || message.author)}</span>
+        ${renderAvatar(message.avatarUrl, message.avatar || message.author)}
         <div class="message-body">
           <div class="message-meta">
             <span class="message-author">${escapeHtml(message.author)}</span>
@@ -351,6 +416,13 @@ function renderActionButtons() {
 }
 
 function renderMembers() {
+  if (state.runtimeMode === "discord") {
+    return `<section class="member-group">
+        <div class="member-group-title">Aktif Activity Oyuncuları - ${state.members.length}</div>
+        ${state.members.length ? state.members.map(renderMemberRow).join("") : '<div class="member-empty">Bu activityde henüz aktif kimse yok.</div>'}
+      </section>`;
+  }
+
   return [
     ["Online", "online"],
     ["Boşta", "idle"],
@@ -359,18 +431,21 @@ function renderMembers() {
   ].map(([label, key]) => {
     const items = state.members.filter((member) => member.status === key);
     if (!items.length) return "";
-    return `<section class="member-group"><div class="member-group-title">${label} — ${items.length}</div>${items.map((member) => `
-          <div class="member">
-            <div class="member-avatar-wrap">
-              <span class="avatar">${initials(member.avatar)}</span>
-              <span class="status-dot" style="background:${statusColor(member.status)}"></span>
-            </div>
-            <span class="member-meta">
-              <span class="member-name">${escapeHtml(member.username)}</span>
-              ${member.customStatus ? `<span class="member-status-text">${escapeHtml(member.customStatus)}</span>` : ""}
-            </span>
-          </div>`).join("")}</section>`;
+    return `<section class="member-group"><div class="member-group-title">${label} - ${items.length}</div>${items.map(renderMemberRow).join("")}</section>`;
   }).join("");
+}
+
+function renderMemberRow(member) {
+  return `<div class="member">
+      <div class="member-avatar-wrap">
+        ${renderAvatar(member.avatarUrl, member.avatar || member.username)}
+        <span class="status-dot" style="background:${statusColor(member.status)}"></span>
+      </div>
+      <span class="member-meta">
+        <span class="member-name">${escapeHtml(member.username)}</span>
+        ${member.customStatus ? `<span class="member-status-text">${escapeHtml(member.customStatus)}</span>` : ""}
+      </span>
+    </div>`;
 }
 
 function bindRuntimeUi() {
@@ -616,8 +691,9 @@ async function persistMessage(message) {
 function makeMessage({ type, content }) {
   return {
     id: uid(),
-    author: state.currentUser.username,
-    avatar: state.currentUser.username,
+    author: state.currentUser.displayName,
+    avatar: state.currentUser.displayName,
+    avatarUrl: state.currentUser.avatarUrl,
     time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
     type,
     content
@@ -689,9 +765,9 @@ function closeUserModal() {
   userBackdrop.setAttribute("aria-hidden", "true");
 }
 
-function buildScopeKey(auth) {
-  const guildId = auth?.guild_id || state.discordSdk?.guildId || "noguild";
-  const channelId = auth?.channel_id || state.discordSdk?.channelId || "nochannel";
+function buildScopeKey() {
+  const guildId = state.discordSdk?.guildId || "noguild";
+  const channelId = state.discordSdk?.channelId || "nochannel";
   return `${guildId}:${channelId}`;
 }
 
@@ -708,11 +784,95 @@ function mergeMessages(channels) {
 }
 
 function syncUserTag() {
-  userModalTag.textContent = `${state.currentUser.username}#${state.currentUser.discriminator}`;
+  userModalTag.textContent = `${state.currentUser.displayName} (${state.currentUser.tag})`;
+}
+
+function renderAvatar(avatarUrl, label) {
+  if (avatarUrl) {
+    return `<img class="avatar avatar-image" src="${escapeAttr(avatarUrl)}" alt="${escapeAttr(label || "Avatar")}">`;
+  }
+  return `<span class="avatar">${initials(label)}</span>`;
 }
 
 function initials(value) {
-  return Array.from(String(value).replace(/\s+/g, "").trim()).slice(0, 2).join("").toUpperCase();
+  return Array.from(String(value || "?").replace(/\s+/g, "").trim()).slice(0, 2).join("").toUpperCase();
+}
+
+function mapDiscordParticipant(participant, index) {
+  const id = participant?.id || participant?.user?.id || uid();
+  const username =
+    participant?.nick ||
+    participant?.nickname ||
+    participant?.global_name ||
+    participant?.user?.global_name ||
+    participant?.username ||
+    participant?.user?.username ||
+    `Oyuncu ${index + 1}`;
+  const rawUsername = participant?.username || participant?.user?.username || username;
+
+  return {
+    id,
+    username,
+    avatar: username,
+    avatarUrl: buildDiscordUserAvatarUrl(
+      id,
+      participant?.avatar || participant?.user?.avatar,
+      participant?.discriminator || participant?.user?.discriminator
+    ),
+    status: "online",
+    customStatus: rawUsername === username ? "" : `@${rawUsername}`
+  };
+}
+
+function currentUserAsMember() {
+  return {
+    id: state.currentUser.id,
+    username: state.currentUser.displayName,
+    avatar: state.currentUser.displayName,
+    avatarUrl: state.currentUser.avatarUrl,
+    status: "online",
+    customStatus: state.currentUser.tag
+  };
+}
+
+function dedupeMembers(members) {
+  const byId = new Map();
+  for (const member of members) {
+    byId.set(member.id, member);
+  }
+
+  byId.set(state.currentUser.id, currentUserAsMember());
+
+  return [...byId.values()];
+}
+
+function buildDiscordUserAvatarUrl(userId, avatarHash, discriminator = "0") {
+  if (!userId) return "";
+
+  if (avatarHash) {
+    const ext = avatarHash.startsWith("a_") ? "gif" : "png";
+    return `https://cdn.discordapp.com/avatars/${userId}/${avatarHash}.${ext}?size=128`;
+  }
+
+  return `https://cdn.discordapp.com/embed/avatars/${defaultAvatarIndex(userId, discriminator)}.png`;
+}
+
+function buildDiscordGuildAvatarUrl(guildId, userId, avatarHash) {
+  if (!guildId || !userId || !avatarHash) return "";
+  const ext = avatarHash.startsWith("a_") ? "gif" : "png";
+  return `https://cdn.discordapp.com/guilds/${guildId}/users/${userId}/avatars/${avatarHash}.${ext}?size=128`;
+}
+
+function defaultAvatarIndex(userId, discriminator = "0") {
+  if (discriminator && discriminator !== "0") {
+    return Number(discriminator) % 5;
+  }
+
+  try {
+    return Number(BigInt(userId) >> 22n) % 6;
+  } catch {
+    return 0;
+  }
 }
 
 function statusColor(status) {
@@ -768,3 +928,12 @@ function icon(name, size = 24, className = "") {
 
   return `<svg${cls} xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" ${stroke}>${map[name] || ""}</svg>`;
 }
+
+
+
+
+
+
+
+
+

@@ -23,7 +23,7 @@ export default async function handler(req, res) {
       client_secret: process.env.DISCORD_CLIENT_SECRET,
       grant_type: "authorization_code",
       code,
-      redirect_uri: process.env.DISCORD_REDIRECT_URI || "https://project-ex7h6.vercel.app"
+      redirect_uri: process.env.DISCORD_REDIRECT_URI || "https://127.0.0.1"
     });
 
     const response = await fetch("https://discord.com/api/oauth2/token", {
