@@ -2,6 +2,8 @@
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const MOCK_MODE = new URLSearchParams(window.location.search).get("mock") === "1" || !DISCORD_CLIENT_ID;
+const ADMIN_USER_IDS = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USER_IDS || "");
+const ADMIN_USERNAMES = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USERNAMES || "kayahan14");
 
 const DEFAULT_CHANNELS = [
   { id: "1", name: "🔥🍕-3️⃣ 1️⃣-🍕🔥", categoryId: "" },
@@ -23,13 +25,6 @@ const DEFAULT_MEMBERS = [
   { id: uid(), username: "Yiğit", avatar: "Yiğit", status: "idle", customStatus: "☕ Molada" },
   { id: uid(), username: "Metehan", avatar: "Metehan", status: "dnd", customStatus: "📝 Çalışıyor" },
   { id: uid(), username: "Burak", avatar: "Burak", status: "offline", customStatus: "" }
-];
-
-const DEFAULT_BUTTONS = [
-  { id: uid(), label: "🃏 Blackjack", kind: "game", game: "blackjack" },
-  { id: uid(), label: "💣 Mines", kind: "game", game: "mines" },
-  { id: uid(), label: "🎲 Zar", kind: "game", game: "dice" },
-  { id: uid(), label: "🎁 Kasa", kind: "game", game: "case" }
 ];
 
 const FALLBACK_MESSAGE = {
@@ -63,13 +58,12 @@ const state = {
     discriminator: "0001",
     avatarUrl: "",
     guildId: "",
-    isAdmin: true
+    isAdmin: MOCK_MODE
   },
   categories: [],
   channels: [...DEFAULT_CHANNELS],
   selectedChannelId: initialChannelId(),
   messagesByChannel: buildEmptyMessageState(),
-  actionButtons: [...DEFAULT_BUTTONS],
   members: [...DEFAULT_MEMBERS],
   activeAdminTab: "channels",
   editingActionId: null,
@@ -81,9 +75,9 @@ const adminBackdrop = document.getElementById("adminBackdrop");
 const userBackdrop = document.getElementById("userBackdrop");
 const channelList = document.getElementById("channelList");
 const channelCategory = document.getElementById("channelCategory");
-const quickActionList = document.getElementById("quickActionList");
 const categoryList = document.getElementById("categoryList");
 const userModalTag = document.getElementById("userModalTag");
+const adminBadge = document.getElementById("adminBadge");
 const tabs = [...document.querySelectorAll(".tab")];
 
 bootstrap();
@@ -99,7 +93,6 @@ async function bootstrap() {
 
 function decorateStaticUi() {
   document.getElementById("addChannelButton").innerHTML = `${icon("plus", 16)}Ekle`;
-  document.getElementById("addQuickActionButton").innerHTML = `${icon("plus", 16)}Ekle`;
   document.getElementById("addCategoryButton").innerHTML = `${icon("plus", 16)}Ekle`;
   document.getElementById("closeAdmin").innerHTML = icon("close", 24);
   document.getElementById("closeUser").innerHTML = icon("close", 24);
@@ -125,7 +118,6 @@ function bindStaticEvents() {
   });
 
   document.getElementById("channelForm").addEventListener("submit", addChannel);
-  document.getElementById("quickActionForm").addEventListener("submit", addActionButton);
   document.getElementById("categoryForm").addEventListener("submit", addCategory);
 
   window.addEventListener("popstate", () => {
@@ -202,6 +194,7 @@ function hydrateCurrentUser(auth) {
   const user = auth?.user || {};
   const username = user.username || state.currentUser.username;
   const displayName = user.global_name || username || state.currentUser.displayName;
+  const isAdmin = computeIsAdmin(user);
   state.currentUser = {
     ...state.currentUser,
     id: user.id || state.currentUser.id,
@@ -211,7 +204,7 @@ function hydrateCurrentUser(auth) {
     discriminator: user.discriminator || "0000",
     avatarUrl: buildDiscordUserAvatarUrl(user.id, user.avatar, user.discriminator),
     guildId: state.discordSdk?.guildId || "",
-    isAdmin: true
+    isAdmin
   };
   syncUserTag();
 }
@@ -378,7 +371,7 @@ function render() {
         ${renderChannelSections()}
       </div>
       <div class="sidebar-footer">
-        <button type="button" class="current-user" id="openUserButton">
+        <button type="button" class="current-user ${state.currentUser.isAdmin ? "" : "is-locked"}" id="openUserButton" ${state.currentUser.isAdmin ? "" : "disabled"}>
           ${renderAvatar(state.currentUser.avatarUrl, state.currentUser.displayName)}
           <span class="user-meta">
             <span class="user-name">${escapeHtml(state.currentUser.displayName)}</span>
@@ -398,7 +391,6 @@ function render() {
             <div class="chat-header-right">
               <button type="button" class="icon-muted" aria-label="Bildirim">${icon("bell", 20)}</button>
               <button type="button" class="icon-muted" aria-label="Pin">${icon("pin", 20)}</button>
-              <button type="button" class="icon-muted" aria-label="Üyeler">${icon("users", 20)}</button>
               <label class="search" aria-label="Ara">
                 <input id="messageSearchInput" type="text" value="${escapeAttr(state.searchQuery)}" placeholder="Mesajlarda ara">
                 ${icon("search", 16)}
@@ -409,16 +401,9 @@ function render() {
             ${messages.length ? renderMessages(messages) : renderEmptyMessageState(channel)}
           </div>
           <div class="composer-wrap">
-            <div class="quick-actions" id="actionButtons">${renderActionButtons()}</div>
             <form class="composer" id="composerForm">
-              <button type="button" class="icon-muted" id="openAdminButton" aria-label="Admin">${icon("plus", 24)}</button>
               <input id="composerInput" type="text" value="${escapeAttr(state.composerDraft)}" placeholder="${escapeAttr((channel?.name || "") + " kanalına mesaj gönder")}" autocomplete="off">
               <button type="submit" class="btn btn-primary composer-send">Gönder</button>
-              <div class="composer-actions">
-                <button type="button" class="icon-muted">${icon("gift", 20)}</button>
-                <button type="button" class="icon-muted">${icon("hash", 20)}</button>
-                <button type="button" class="icon-muted">${icon("smile", 20)}</button>
-              </div>
             </form>
           </div>
         </section>
@@ -454,7 +439,6 @@ function renderChannelSections() {
               ${icon(category.collapsed ? "chevron-right" : "chevron-down", 12)}
               <span>${escapeHtml(category.name)}</span>
             </button>
-            <button type="button" class="section-add open-admin" aria-label="Admin">${icon("plus", 16)}</button>
           </div>
           ${category.collapsed ? "" : items.map(renderChannelLink).join("")}
         </div>
@@ -468,7 +452,6 @@ function renderChannelSections() {
     <div class="section">
       <div class="section-header">
         <div class="section-title">${icon("chevron-down", 12)}<span>Metin Kanalları</span></div>
-        <button type="button" class="section-add open-admin" aria-label="Admin">${icon("plus", 16)}</button>
       </div>
       ${rootItems}
     </div>
@@ -492,10 +475,6 @@ function renderMessages(messages) {
           <div class="message-text">${highlightMultilineText(message.content, state.searchQuery)}</div>
         </div>
       </article>`).join("")}</div>`;
-}
-
-function renderActionButtons() {
-  return state.actionButtons.map((button) => `<button type="button" data-action-id="${button.id}">${escapeHtml(button.label)}</button>`).join("");
 }
 
 function renderMembers() {
@@ -536,25 +515,14 @@ function bindRuntimeUi() {
     event.preventDefault();
     selectChannel(link.dataset.channelId);
   }));
-
-  app.querySelectorAll(".open-admin").forEach((button) => button.addEventListener("click", openAdminModal));
   app.querySelectorAll(".category-toggle").forEach((button) => button.addEventListener("click", () => {
     state.categories = state.categories.map((item) => item.id === button.dataset.categoryId ? { ...item, collapsed: !item.collapsed } : item);
     render();
   }));
-
-  document.getElementById("openUserButton").addEventListener("click", openUserModal);
-  document.getElementById("openAdminButton").addEventListener("click", openAdminModal);
-
-  document.querySelectorAll("[data-action-id]").forEach((button) => button.addEventListener("click", async () => {
-    const config = state.actionButtons.find((item) => item.id === button.dataset.actionId);
-    if (!config) return;
-    if (config.kind === "game") {
-      await sendGameMessage(config.game, config.label);
-      return;
-    }
-    await submitMessage(config.message || config.label);
-  }));
+  const userButton = document.getElementById("openUserButton");
+  if (userButton && state.currentUser.isAdmin) {
+    userButton.addEventListener("click", openUserModal);
+  }
 
   const form = document.getElementById("composerForm");
   const input = document.getElementById("composerInput");
@@ -601,8 +569,7 @@ function bindRuntimeUi() {
 
 function renderAdmin() {
   tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === state.activeAdminTab));
-  document.getElementById("channelsPanel").classList.toggle("active", state.activeAdminTab === "channels");
-  document.getElementById("actionsPanel").classList.toggle("active", state.activeAdminTab === "actions");
+  document.getElementById("channelsPanel").classList.add("active");
 
   channelCategory.innerHTML = `<option value="">Kategori Seç (Opsiyonel)</option>${state.categories.map((category) => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join("")}`;
 
@@ -611,34 +578,6 @@ function renderAdmin() {
         <span class="item-name">${escapeHtml(channel.name)}</span>
         <button type="button" class="icon-danger" data-delete-channel-id="${channel.id}" aria-label="Sil">${icon("trash", 16)}</button>
       </div>`).join("");
-
-  quickActionList.innerHTML = state.actionButtons.map((item) => {
-    if (state.editingActionId === item.id) {
-      return `
-          <div class="item">
-            <div class="grow stack-lg">
-              <input class="field" id="editActionLabel" type="text" value="${escapeAttr(state.tempAction.label)}">
-              <textarea class="field textarea" id="editActionMessage" rows="2">${escapeHtml(state.tempAction.message)}</textarea>
-              <div class="inline-actions">
-                <button type="button" class="btn btn-green" data-save-action-id="${item.id}">${icon("check", 12)}Kaydet</button>
-                <button type="button" class="btn btn-secondary" id="cancelActionEdit">İptal</button>
-              </div>
-            </div>
-          </div>`;
-    }
-
-    return `
-        <div class="item">
-          <div class="grow">
-            <div class="item-title">${escapeHtml(item.label)}</div>
-            <div class="item-subtext">${escapeHtml(item.kind === "game" ? `${item.game} mini oyunu` : item.message || "")}</div>
-          </div>
-          <div class="inline-actions">
-            <button type="button" data-edit-action-id="${item.id}" aria-label="Düzenle">${icon("edit", 16)}</button>
-            <button type="button" class="icon-danger" data-delete-action-id="${item.id}" aria-label="Sil">${icon("trash", 16)}</button>
-          </div>
-        </div>`;
-  }).join("");
 
   bindAdmin();
 }
@@ -656,46 +595,10 @@ function bindAdmin() {
     render();
     renderAdmin();
   }));
-
-  quickActionList.querySelectorAll("[data-delete-action-id]").forEach((button) => button.addEventListener("click", () => {
-    state.actionButtons = state.actionButtons.filter((item) => item.id !== button.dataset.deleteActionId);
-    render();
-    renderAdmin();
-  }));
-
-  quickActionList.querySelectorAll("[data-edit-action-id]").forEach((button) => button.addEventListener("click", () => {
-    const item = state.actionButtons.find((entry) => entry.id === button.dataset.editActionId);
-    if (!item) return;
-    state.editingActionId = item.id;
-    state.tempAction = { label: item.label, message: item.message || "" };
-    renderAdmin();
-  }));
-
-  const save = quickActionList.querySelector("[data-save-action-id]");
-  const cancel = document.getElementById("cancelActionEdit");
-  if (save) {
-    save.addEventListener("click", () => {
-      const label = document.getElementById("editActionLabel").value.trim();
-      const message = document.getElementById("editActionMessage").value.trim();
-      if (!label) return;
-      state.actionButtons = state.actionButtons.map((item) => item.id === save.dataset.saveActionId ? { ...item, label, message, kind: "text" } : item);
-      state.editingActionId = null;
-      state.tempAction = { label: "", message: "" };
-      render();
-      renderAdmin();
-    });
-  }
-
-  if (cancel) {
-    cancel.addEventListener("click", () => {
-      state.editingActionId = null;
-      state.tempAction = { label: "", message: "" };
-      renderAdmin();
-    });
-  }
 }
 
 function renderUserModal() {
+  adminBadge.hidden = !state.currentUser.isAdmin;
   categoryList.innerHTML = state.categories.length
     ? state.categories.map((category) => `
           <div class="item">
@@ -724,19 +627,6 @@ function addChannel(event) {
   const nextId = String(Math.max(0, ...state.channels.map((channel) => Number(channel.id) || 0)) + 1);
   state.channels.push({ id: nextId, name, categoryId });
   state.messagesByChannel[nextId] ||= [];
-  event.currentTarget.reset();
-  render();
-  renderAdmin();
-}
-
-function addActionButton(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const label = String(form.get("quickActionLabel") || "").trim();
-  const message = String(form.get("quickActionMessage") || "").trim();
-  if (!label || !message) return;
-
-  state.actionButtons.push({ id: uid(), label, message, kind: "text" });
   event.currentTarget.reset();
   render();
   renderAdmin();
@@ -860,6 +750,7 @@ function channelHref(id) {
 }
 
 function openAdminModal() {
+  if (!state.currentUser.isAdmin) return;
   adminBackdrop.classList.add("open");
   adminBackdrop.setAttribute("aria-hidden", "false");
 }
@@ -870,6 +761,7 @@ function closeAdminModal() {
 }
 
 function openUserModal() {
+  if (!state.currentUser.isAdmin) return;
   userBackdrop.classList.add("open");
   userBackdrop.setAttribute("aria-hidden", "false");
 }
@@ -899,6 +791,18 @@ function mergeMessages(channels) {
 
 function syncUserTag() {
   userModalTag.textContent = `${state.currentUser.displayName} (${state.currentUser.tag})`;
+}
+
+function computeIsAdmin(user) {
+  if (MOCK_MODE) return true;
+
+  const userId = String(user?.id || "");
+  const username = String(user?.username || "").toLocaleLowerCase();
+  const globalName = String(user?.global_name || "").toLocaleLowerCase();
+
+  return ADMIN_USER_IDS.includes(userId)
+    || ADMIN_USERNAMES.includes(username)
+    || ADMIN_USERNAMES.includes(globalName);
 }
 
 function focusComposer() {
@@ -1160,6 +1064,13 @@ function uid() {
   return typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseCsv(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim().toLocaleLowerCase())
+    .filter(Boolean);
 }
 
 function icon(name, size = 24, className = "") {

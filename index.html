@@ -19,18 +19,14 @@
         <h2 id="adminTitle" class="modal-title">Admin Panel</h2>
         <button type="button" id="closeAdmin" class="modal-close" aria-label="Kapat"></button>
       </div>
-      <div class="tabs">
-        <button type="button" class="tab active" data-tab="channels">Kanalları Yönet</button>
-        <button type="button" class="tab" data-tab="actions">Hızlı Mesajlar</button>
-      </div>
       <div class="modal-body">
         <section id="channelsPanel" class="panel active">
           <form id="channelForm" class="stack-lg">
             <label class="field-label" for="channelName">Yeni Kanal Ekle</label>
             <div class="row">
-              <input id="channelName" name="channelName" class="field grow" type="text" placeholder="Kanal adı (örn: 📢-duyurular)">
+              <input id="channelName" name="channelName" class="field grow" type="text" placeholder="Kanal adi">
               <select id="channelCategory" name="channelCategory" class="field-select">
-                <option value="">Kategori Seç (Opsiyonel)</option>
+                <option value="">Kategori Sec (Opsiyonel)</option>
               </select>
               <button type="submit" class="btn btn-primary" id="addChannelButton"></button>
             </div>
@@ -38,21 +34,6 @@
           <div class="stack-lg">
             <span class="field-label">Mevcut Kanallar</span>
             <div id="channelList"></div>
-          </div>
-        </section>
-
-        <section id="actionsPanel" class="panel">
-          <form id="quickActionForm" class="stack-lg">
-            <label class="field-label" for="quickActionLabel">Yeni Hızlı Mesaj Ekle</label>
-            <input id="quickActionLabel" name="quickActionLabel" class="field" type="text" placeholder="Buton etiketi (örn: Merhaba)">
-            <textarea id="quickActionMessage" name="quickActionMessage" class="field textarea" rows="3" placeholder="Gönderilecek mesaj"></textarea>
-            <div>
-              <button type="submit" class="btn btn-primary" id="addQuickActionButton"></button>
-            </div>
-          </form>
-          <div class="stack-lg">
-            <span class="field-label">Mevcut Hızlı Mesajlar</span>
-            <div id="quickActionList"></div>
           </div>
         </section>
       </div>
@@ -66,10 +47,10 @@
     <div class="modal user-modal" role="dialog" aria-modal="true" aria-labelledby="userTitle">
       <div class="modal-header">
         <div>
-          <h2 id="userTitle" class="modal-title">Kullanıcı Menüsü</h2>
+          <h2 id="userTitle" class="modal-title">Kullanici Menusu</h2>
           <p class="modal-subtitle">
             <span id="userModalTag"></span>
-            <span class="admin-badge">Admin</span>
+            <span id="adminBadge" class="admin-badge">Admin</span>
           </p>
         </div>
         <button type="button" id="closeUser" class="modal-close" aria-label="Kapat"></button>
@@ -78,7 +59,7 @@
         <form id="categoryForm" class="stack-lg">
           <label class="field-label" for="categoryName">Yeni Kategori Ekle</label>
           <div class="row">
-            <input id="categoryName" name="categoryName" class="field grow" type="text" placeholder="Kategori adı (örn: Genel Sohbet)">
+            <input id="categoryName" name="categoryName" class="field grow" type="text" placeholder="Kategori adi">
             <button type="submit" class="btn btn-primary" id="addCategoryButton"></button>
           </div>
         </form>
@@ -87,8 +68,8 @@
           <div id="categoryList"></div>
         </div>
         <div class="hint">
-          <strong>Bilgi:</strong> Kategoriler, kanal listesinde kanalları organize etmenize yardımcı olur.
-          Kategori eklediğinizde, yeni kanallar oluştururken bu kategorileri seçebilirsiniz.
+          <strong>Bilgi:</strong> Kategoriler, kanal listesinde kanallari organize etmenize yardimci olur.
+          Kategori eklediginizde, yeni kanallar olustururken bu kategorileri secebilirsiniz.
         </div>
       </div>
       <div class="modal-footer">

@@ -141,6 +141,13 @@ svg { display: block; }
   transition: background .15s ease;
 }
 .current-user:hover { background: var(--bg-field); }
+.current-user.is-locked {
+  cursor: default;
+  opacity: 0.78;
+}
+.current-user.is-locked:hover {
+  background: transparent;
+}
 .avatar {
   width: 32px;
   height: 32px;
