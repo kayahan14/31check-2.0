@@ -53,6 +53,7 @@ const state = {
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
   forceScrollToBottom: false,
+  highlightedMessageId: "",
   pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
     id: "local-user",
@@ -366,7 +367,8 @@ function render() {
   const shouldRestoreSearchFocus = document.activeElement?.id === "messageSearchInput";
   const shouldStickToBottom = state.messagePanePinnedToBottom || state.forceScrollToBottom;
   const channel = selectedChannel();
-  const messages = filterMessages(state.messagesByChannel[channel?.id] || [], state.searchQuery);
+  const rawMessages = state.messagesByChannel[channel?.id] || [];
+  const messages = filterMessages(rawMessages, state.searchQuery);
 
   app.className = "app";
   app.innerHTML = `
@@ -479,15 +481,15 @@ function renderChannelLink(channel) {
 
 function renderMessages(messages) {
   return `<div class="message-stack">${messages.map((message) => `
-      <article class="message ${message.type === "game" ? "message-game" : ""}">
+      <article class="message ${message.type === "game" ? "message-game" : ""} ${message.id === state.highlightedMessageId ? "message-highlighted" : ""} ${state.searchQuery.trim() ? "message-search-hit" : ""}" data-message-id="${escapeAttr(message.id)}">
         ${renderAvatar(message.avatarUrl, message.avatar || message.author)}
         <div class="message-body">
           <div class="message-meta">
-            <span class="message-author">${escapeHtml(message.author)}</span>
+            <span class="message-author">${highlightText(message.author, state.searchQuery)}</span>
             <span class="verified">${icon("verified", 16)}</span>
             <span class="message-time">${escapeHtml(formatMessageTime(message))}</span>
           </div>
-          <div class="message-text">${escapeHtml(message.content)}</div>
+          <div class="message-text">${highlightMultilineText(message.content, state.searchQuery)}</div>
         </div>
       </article>`).join("")}</div>`;
 }
@@ -566,9 +568,16 @@ function bindRuntimeUi() {
   if (searchInput) {
     searchInput.addEventListener("input", () => {
       state.searchQuery = searchInput.value;
+      state.highlightedMessageId = "";
       render();
     });
   }
+  app.querySelectorAll("[data-message-id]").forEach((messageRow) => {
+    messageRow.addEventListener("click", () => {
+      if (!state.searchQuery.trim()) return;
+      focusMessage(messageRow.dataset.messageId);
+    });
+  });
   input.addEventListener("input", () => {
     state.composerDraft = input.value;
   });
@@ -925,6 +934,17 @@ function scrollMessagesToBottom() {
   pane.scrollTop = pane.scrollHeight;
 }
 
+function focusMessage(messageId) {
+  if (!messageId) return;
+  state.highlightedMessageId = messageId;
+  render();
+  requestAnimationFrame(() => {
+    const target = document.querySelector(`[data-message-id="${cssEscape(messageId)}"]`);
+    if (!target) return;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+}
+
 function isNearBottom(element) {
   if (!element) return true;
   const threshold = 24;
@@ -967,6 +987,24 @@ function filterMessages(messages, query) {
   });
 }
 
+function highlightText(value, query) {
+  return applyHighlightMarkup(escapeHtml(String(value || "")), query);
+}
+
+function highlightMultilineText(value, query) {
+  return applyHighlightMarkup(escapeHtml(String(value || "")).replaceAll("\n", "<br>"), query);
+}
+
+function applyHighlightMarkup(escapedText, query) {
+  const normalizedQuery = String(query || "").trim();
+  if (!normalizedQuery) {
+    return escapedText;
+  }
+
+  const escapedQuery = escapeRegExp(escapeHtml(normalizedQuery));
+  return escapedText.replace(new RegExp(`(${escapedQuery})`, "gi"), '<mark class="message-mark">$1</mark>');
+}
+
 function renderEmptyMessageState(channel) {
   if (state.searchQuery.trim()) {
     return `<div class="empty-state">"${escapeHtml(state.searchQuery)}" icin bu kanalda sonuc bulunamadi.</div>`;
@@ -992,6 +1030,18 @@ function normalizeMessageTimestamp(message) {
   }
 
   return 0;
+}
+
+function cssEscape(value) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function renderAvatar(avatarUrl, label) {
