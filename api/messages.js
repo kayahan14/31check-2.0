@@ -2,6 +2,10 @@ import { readStore, writeStore } from "../server/storage.js";
 
 export default async function handler(req, res) {
   try {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+
     if (req.method === "GET") {
       const scopeKey = String(req.query.scopeKey || "local-preview");
       const store = await readStore();

@@ -49,6 +49,7 @@ const state = {
   scopeKey: "local-preview",
   messageSyncHandle: null,
   composerDraft: "",
+  pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
     id: "local-user",
     username: "31check",
@@ -291,7 +292,9 @@ function syncParticipants(participants) {
 }
 
 async function loadPersistedMessages() {
-  const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}`);
+  const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}&ts=${Date.now()}`, {
+    cache: "no-store"
+  });
   if (!response.ok) return;
 
   const payload = await response.json();
@@ -326,6 +329,21 @@ function handleVisibilitySync() {
 
 function syncRemoteMessages(channels) {
   const nextMessages = mergeMessages(channels);
+  const pending = mergeMessages(state.pendingMessagesByChannel);
+
+  for (const [channelId, pendingList] of Object.entries(pending)) {
+    if (!pendingList.length) continue;
+
+    const remoteIds = new Set((nextMessages[channelId] || []).map((message) => message.id));
+    const stillPending = pendingList.filter((message) => !remoteIds.has(message.id));
+
+    if (stillPending.length) {
+      nextMessages[channelId] = [...(nextMessages[channelId] || []), ...stillPending];
+    }
+
+    state.pendingMessagesByChannel[channelId] = stillPending;
+  }
+
   const previousSnapshot = JSON.stringify(state.messagesByChannel);
   const nextSnapshot = JSON.stringify(nextMessages);
   if (previousSnapshot === nextSnapshot) return;
@@ -708,6 +726,8 @@ function appendLocalMessage(message) {
   const channel = selectedChannel();
   if (!channel) return;
 
+  state.pendingMessagesByChannel[channel.id] ||= [];
+  state.pendingMessagesByChannel[channel.id].push(message);
   state.messagesByChannel[channel.id] ||= [];
   state.messagesByChannel[channel.id].push(message);
   render();
@@ -733,6 +753,8 @@ async function persistMessage(message) {
     }
     await loadPersistedMessages();
   } catch (error) {
+    state.pendingMessagesByChannel[channel.id] = (state.pendingMessagesByChannel[channel.id] || [])
+      .filter((entry) => entry.id !== message.id);
     console.warn("Message persistence failed.", error);
   }
 }
