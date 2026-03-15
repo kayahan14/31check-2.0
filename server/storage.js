@@ -13,13 +13,24 @@ globalThis.__activityChatStore ||= { scopes: {} };
 export async function readStore() {
   if (process.env.BLOB_READ_WRITE_TOKEN) {
     try {
-      const { get } = await import("@vercel/blob");
-      const result = await get(blobPathname, { access: "private" });
-      if (!result || result.statusCode !== 200 || !result.stream) {
+      const { head } = await import("@vercel/blob");
+      let blob;
+      try {
+        blob = await head(blobPathname);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("not found")) {
+          return { scopes: {} };
+        }
+        throw error;
+      }
+
+      const response = await fetch(`${blob.downloadUrl}&ts=${Date.now()}`, { cache: "no-store" });
+      if (!response.ok) {
         return { scopes: {} };
       }
 
-      const raw = await new Response(result.stream).text();
+      const raw = await response.text();
       const parsed = JSON.parse(raw);
       parsed.scopes ||= {};
       return parsed;
@@ -51,7 +62,7 @@ export async function writeStore(store) {
     try {
       const { put } = await import("@vercel/blob");
       await put(blobPathname, JSON.stringify(store, null, 2), {
-        access: "private",
+        access: "public",
         addRandomSuffix: false,
         allowOverwrite: true,
         contentType: "application/json",
