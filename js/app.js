@@ -49,6 +49,7 @@ const state = {
   scopeKey: "local-preview",
   messageSyncHandle: null,
   composerDraft: "",
+  keepComposerFocus: false,
   pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
     id: "local-user",
@@ -353,6 +354,7 @@ function syncRemoteMessages(channels) {
 }
 
 function render() {
+  const shouldRestoreComposerFocus = document.activeElement?.id === "composerInput" || state.keepComposerFocus;
   const channel = selectedChannel();
   const messages = state.messagesByChannel[channel?.id] || [];
 
@@ -416,6 +418,9 @@ function render() {
   `;
 
   bindRuntimeUi();
+  if (shouldRestoreComposerFocus) {
+    focusComposer();
+  }
 }
 
 function renderChannelSections() {
@@ -543,6 +548,7 @@ function bindRuntimeUi() {
     if (!value) return;
     input.value = "";
     state.composerDraft = "";
+    state.keepComposerFocus = true;
     await submitMessage(value);
   });
 
@@ -760,11 +766,14 @@ async function persistMessage(message) {
 }
 
 function makeMessage({ type, content }) {
+  const createdAtMs = Date.now();
   return {
     id: uid(),
     author: state.currentUser.displayName,
     avatar: state.currentUser.displayName,
     avatarUrl: state.currentUser.avatarUrl,
+    createdAt: new Date(createdAtMs).toISOString(),
+    createdAtMs,
     time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
     type,
     content
@@ -856,6 +865,20 @@ function mergeMessages(channels) {
 
 function syncUserTag() {
   userModalTag.textContent = `${state.currentUser.displayName} (${state.currentUser.tag})`;
+}
+
+function focusComposer() {
+  const input = document.getElementById("composerInput");
+  if (!input) return;
+
+  input.focus();
+  const cursor = input.value.length;
+  try {
+    input.setSelectionRange(cursor, cursor);
+  } catch {
+    // Selection APIs are best-effort in embedded browsers.
+  }
+  state.keepComposerFocus = false;
 }
 
 function renderAvatar(avatarUrl, label) {

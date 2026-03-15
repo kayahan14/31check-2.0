@@ -1,4 +1,4 @@
-import { readStore, writeStore } from "../server/storage.js";
+import { appendMessage, listScopeChannels } from "../server/storage.js";
 
 export default async function handler(req, res) {
   try {
@@ -8,12 +8,11 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const scopeKey = String(req.query.scopeKey || "local-preview");
-      const store = await readStore();
-      const scope = store.scopes[scopeKey] || { channels: {} };
+      const channels = await listScopeChannels(scopeKey);
 
       res.status(200).json({
         scopeKey,
-        channels: scope.channels || {}
+        channels
       });
       return;
     }
@@ -26,14 +25,9 @@ export default async function handler(req, res) {
         return;
       }
 
-      const store = await readStore();
-      store.scopes[scopeKey] ||= { channels: {} };
-      store.scopes[scopeKey].channels[channelId] ||= [];
-      store.scopes[scopeKey].channels[channelId].push(message);
+      const storedMessage = await appendMessage(scopeKey, channelId, message);
 
-      await writeStore(store);
-
-      res.status(201).json({ ok: true });
+      res.status(201).json({ ok: true, message: storedMessage });
       return;
     }
 

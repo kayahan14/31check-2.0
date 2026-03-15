@@ -1,17 +1,8 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 import dotenv from "dotenv";
 import express from "express";
+import { appendMessage, listScopeChannels } from "./storage.js";
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, "..");
-const dataFile = path.join(rootDir, "data", "chat-history.json");
-
 const app = express();
 const port = Number(process.env.PORT || 3001);
 
@@ -23,11 +14,10 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/messages", async (req, res) => {
   const scopeKey = String(req.query.scopeKey || "local-preview");
-  const store = await readStore();
-  const scope = store.scopes[scopeKey] || { channels: {} };
+  const channels = await listScopeChannels(scopeKey);
   res.json({
     scopeKey,
-    channels: scope.channels || {}
+    channels
   });
 });
 
@@ -43,12 +33,7 @@ app.post("/api/messages", async (req, res) => {
     return;
   }
 
-  const store = await readStore();
-  store.scopes[scopeKey] ||= { channels: {} };
-  store.scopes[scopeKey].channels[channelId] ||= [];
-  store.scopes[scopeKey].channels[channelId].push(message);
-
-  await writeStore(store);
+  await appendMessage(scopeKey, channelId, message);
 
   res.status(201).json({ ok: true });
 });
@@ -105,22 +90,3 @@ app.post("/api/token", async (req, res) => {
 app.listen(port, () => {
   console.log(`Discord Activity backend listening on http://localhost:${port}`);
 });
-
-async function readStore() {
-  try {
-    const raw = await fs.readFile(dataFile, "utf8");
-    const parsed = JSON.parse(raw);
-    parsed.scopes ||= {};
-    return parsed;
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return { scopes: {} };
-    }
-    throw error;
-  }
-}
-
-async function writeStore(store) {
-  await fs.mkdir(path.dirname(dataFile), { recursive: true });
-  await fs.writeFile(dataFile, JSON.stringify(store, null, 2), "utf8");
-}
