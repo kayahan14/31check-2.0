@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { get, put } from "@vercel/blob";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,15 +12,21 @@ globalThis.__activityChatStore ||= { scopes: {} };
 
 export async function readStore() {
   if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const result = await get(blobPathname, { access: "private" });
-    if (!result || result.statusCode !== 200 || !result.stream) {
-      return { scopes: {} };
-    }
+    try {
+      const { get } = await import("@vercel/blob");
+      const result = await get(blobPathname, { access: "private" });
+      if (!result || result.statusCode !== 200 || !result.stream) {
+        return { scopes: {} };
+      }
 
-    const raw = await new Response(result.stream).text();
-    const parsed = JSON.parse(raw);
-    parsed.scopes ||= {};
-    return parsed;
+      const raw = await new Response(result.stream).text();
+      const parsed = JSON.parse(raw);
+      parsed.scopes ||= {};
+      return parsed;
+    } catch (error) {
+      console.warn("Blob read failed, falling back to ephemeral store.", error);
+      return globalThis.__activityChatStore;
+    }
   }
 
   if (process.env.VERCEL) {
@@ -43,14 +48,21 @@ export async function readStore() {
 
 export async function writeStore(store) {
   if (process.env.BLOB_READ_WRITE_TOKEN) {
-    await put(blobPathname, JSON.stringify(store, null, 2), {
-      access: "private",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: "application/json",
-      cacheControlMaxAge: 60
-    });
-    return;
+    try {
+      const { put } = await import("@vercel/blob");
+      await put(blobPathname, JSON.stringify(store, null, 2), {
+        access: "private",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: "application/json",
+        cacheControlMaxAge: 60
+      });
+      return;
+    } catch (error) {
+      console.warn("Blob write failed, falling back to ephemeral store.", error);
+      globalThis.__activityChatStore = store;
+      return;
+    }
   }
 
   if (process.env.VERCEL) {
