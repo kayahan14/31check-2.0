@@ -1,0 +1,210 @@
+{
+  "scopes": {
+    "local-preview": {
+      "channels": {
+        "1": [
+          {
+            "id": "33348240-b649-454e-87f7-55b00f00e0f6",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🃏 Blackjack\nEl sonucu: 15\nOrta karar bir el."
+          },
+          {
+            "id": "d8c1ed5f-ce73-4bd4-9da0-2e2d4f8f1a7d",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🃏 Blackjack\nEl sonucu: 16\nOrta karar bir el."
+          },
+          {
+            "id": "e66cda1e-8f49-4b2c-b9e2-eece1390cd98",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🃏 Blackjack\nEl sonucu: 18\nOrta karar bir el."
+          },
+          {
+            "id": "fa8f30dd-7b7a-44bd-9462-8a5f2f8ccd65",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🃏 Blackjack\nEl sonucu: 23\nBust oldun."
+          },
+          {
+            "id": "e0dd9294-32ed-45cc-b397-2e8f1ca786e5",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🃏 Blackjack\nEl sonucu: 22\nBust oldun."
+          },
+          {
+            "id": "be160e52-5896-4fd3-9c8c-37361c9b0477",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "💣 Mines\nMayına bastın."
+          },
+          {
+            "id": "317b61d6-a326-4d9d-8d7c-b799e03900c0",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "💣 Mines\n2 elmas topladın."
+          },
+          {
+            "id": "182ae079-a440-479b-845e-d369b45ca3a6",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "💣 Mines\nMayına bastın."
+          },
+          {
+            "id": "6a582176-8b85-4225-8e8f-01e8e9f813f4",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "💣 Mines\n3 elmas topladın."
+          },
+          {
+            "id": "967160c6-413f-4b5b-bc40-fa26fca0471f",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "💣 Mines\nMayına bastın."
+          },
+          {
+            "id": "45595b6a-2fdf-4471-b92d-f81da67a04cf",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎲 Zar\nZar sonucu: 5"
+          },
+          {
+            "id": "547096db-755b-495a-bd4c-42d834edec44",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎲 Zar\nZar sonucu: 3"
+          },
+          {
+            "id": "0e3dfd85-fe83-4d6a-b0c2-d4cce75b668f",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎲 Zar\nZar sonucu: 1"
+          },
+          {
+            "id": "d6af6d1c-0965-4c97-9280-4cb789d0a6be",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎲 Zar\nZar sonucu: 5"
+          },
+          {
+            "id": "c1e328d1-3c22-454f-996d-199376f58e40",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: Nadir skin"
+          },
+          {
+            "id": "97286e2d-25c8-4b6b-a2e4-4c106e3a720f",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: XP boost"
+          },
+          {
+            "id": "e10d8076-a714-464e-94ea-e844f33b6efd",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: Jeton paketi"
+          },
+          {
+            "id": "98a78397-c27b-46fa-b59b-63c0b359fe6c",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: Nadir skin"
+          },
+          {
+            "id": "38748299-c195-4ef2-8391-fef723990502",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: Boş kutu"
+          },
+          {
+            "id": "1787d005-a209-480e-87e5-a597964e7f2c",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: Jeton paketi"
+          },
+          {
+            "id": "c2821da8-9009-4c6b-8621-cd9b1d270083",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: Nadir skin"
+          },
+          {
+            "id": "52df6a04-e640-4dc6-948c-caf2ee5a019b",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: XP boost"
+          },
+          {
+            "id": "2855a249-a71c-4551-a545-1683036390a4",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: Nadir skin"
+          },
+          {
+            "id": "1af9a135-d200-4fea-ba49-5330a28f069f",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "game",
+            "content": "🎁 Kasa\nKasadan çıkan: XP boost"
+          },
+          {
+            "id": "25a60c77-914e-4bf9-83c3-63bb57e2f605",
+            "author": "31check",
+            "avatar": "31check",
+            "time": "16:11",
+            "type": "text",
+            "content": "kjhn"
+          }
+        ]
+      }
+    }
+  }
+}

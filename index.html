@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord-like chat interface</title>
+  <meta
+    name="description"
+    content="This web application offers a user-friendly chat interface with customizable menus and an admin panel, enhancing communication for communities and teams."
+  >
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app" class="app-shell"></div>
+
+  <div id="adminBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+      <div class="modal-header">
+        <h2 id="adminTitle" class="modal-title">Admin Panel</h2>
+        <button type="button" id="closeAdmin" class="modal-close" aria-label="Kapat"></button>
+      </div>
+      <div class="tabs">
+        <button type="button" class="tab active" data-tab="channels">Kanalları Yönet</button>
+        <button type="button" class="tab" data-tab="actions">Hızlı Mesajlar</button>
+      </div>
+      <div class="modal-body">
+        <section id="channelsPanel" class="panel active">
+          <form id="channelForm" class="stack-lg">
+            <label class="field-label" for="channelName">Yeni Kanal Ekle</label>
+            <div class="row">
+              <input id="channelName" name="channelName" class="field grow" type="text" placeholder="Kanal adı (örn: 📢-duyurular)">
+              <select id="channelCategory" name="channelCategory" class="field-select">
+                <option value="">Kategori Seç (Opsiyonel)</option>
+              </select>
+              <button type="submit" class="btn btn-primary" id="addChannelButton"></button>
+            </div>
+          </form>
+          <div class="stack-lg">
+            <span class="field-label">Mevcut Kanallar</span>
+            <div id="channelList"></div>
+          </div>
+        </section>
+
+        <section id="actionsPanel" class="panel">
+          <form id="quickActionForm" class="stack-lg">
+            <label class="field-label" for="quickActionLabel">Yeni Hızlı Mesaj Ekle</label>
+            <input id="quickActionLabel" name="quickActionLabel" class="field" type="text" placeholder="Buton etiketi (örn: Merhaba)">
+            <textarea id="quickActionMessage" name="quickActionMessage" class="field textarea" rows="3" placeholder="Gönderilecek mesaj"></textarea>
+            <div>
+              <button type="submit" class="btn btn-primary" id="addQuickActionButton"></button>
+            </div>
+          </form>
+          <div class="stack-lg">
+            <span class="field-label">Mevcut Hızlı Mesajlar</span>
+            <div id="quickActionList"></div>
+          </div>
+        </section>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="adminCloseFooter" class="btn btn-secondary">Kapat</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="userBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal user-modal" role="dialog" aria-modal="true" aria-labelledby="userTitle">
+      <div class="modal-header">
+        <div>
+          <h2 id="userTitle" class="modal-title">Kullanıcı Menüsü</h2>
+          <p class="modal-subtitle">
+            <span id="userModalTag"></span>
+            <span class="admin-badge">Admin</span>
+          </p>
+        </div>
+        <button type="button" id="closeUser" class="modal-close" aria-label="Kapat"></button>
+      </div>
+      <div class="modal-body">
+        <form id="categoryForm" class="stack-lg">
+          <label class="field-label" for="categoryName">Yeni Kategori Ekle</label>
+          <div class="row">
+            <input id="categoryName" name="categoryName" class="field grow" type="text" placeholder="Kategori adı (örn: Genel Sohbet)">
+            <button type="submit" class="btn btn-primary" id="addCategoryButton"></button>
+          </div>
+        </form>
+        <div class="stack-lg">
+          <span class="field-label">Mevcut Kategoriler</span>
+          <div id="categoryList"></div>
+        </div>
+        <div class="hint">
+          <strong>Bilgi:</strong> Kategoriler, kanal listesinde kanalları organize etmenize yardımcı olur.
+          Kategori eklediğinizde, yeni kanallar oluştururken bu kategorileri seçebilirsiniz.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="userCloseFooter" class="btn btn-secondary">Kapat</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

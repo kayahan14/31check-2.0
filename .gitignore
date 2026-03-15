@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.vercel/
+activity-shot.png
+local-shot.png
+figma-shot.png
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
