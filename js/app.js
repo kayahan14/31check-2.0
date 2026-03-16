@@ -115,8 +115,6 @@ const state = {
   dragonRoundAutoCashoutEnabled: dragonAutoCashoutPreference.enabled,
   dragonRoundAutoCashoutTarget: dragonAutoCashoutPreference.target,
   dragonRoundSessionId: "",
-  dragonDisplayedSessionId: "",
-  dragonDisplayedMultiplier: 1,
   toastMessage: "",
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
@@ -1752,7 +1750,7 @@ function renderDragonMessage(message) {
   const joinedCount = (game.participants || []).length;
   const cashedCount = (game.participants || []).filter((entry) => entry.status === "cashed_out").length;
   const crashNow = phase === "playing" && shouldDragonCrash(game);
-  const multiplier = getStableDragonMultiplier(message, phase);
+  const multiplier = getDragonDisplayMultiplier(game, phase);
   const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - getDragonNow()) / 1000));
   const tone = game.status === "crashed" ? "is-loss" : cashedCount ? "is-win" : "";
   const statusLabel = phase === "lobby"
@@ -1823,7 +1821,7 @@ function renderDragonRealtimeView() {
   const participant = getDragonParticipant(game, state.currentUser.id);
   const joined = Boolean(participant);
   const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - getDragonNow()) / 1000));
-  const multiplier = getStableDragonMultiplier(session, phase);
+  const multiplier = getDragonDisplayMultiplier(game, phase);
   const autoSettings = getDragonRoundAutoSettings(session);
   const autoTarget = normalizeDragonAutoCashoutTarget(autoSettings.target);
   const collectible = participant?.status === "cashed_out"
@@ -1897,7 +1895,7 @@ function renderDragonModal() {
   const phase = getDragonPhase(game);
   const participant = getDragonParticipant(game, state.currentUser.id);
   const joined = Boolean(participant);
-  const multiplier = getStableDragonMultiplier(message, phase);
+  const multiplier = getDragonDisplayMultiplier(game, phase);
   const collectible = participant?.status === "cashed_out"
     ? participant.cashoutValue
     : phase === "playing" && participant?.status === "joined"
@@ -3207,13 +3205,9 @@ function applyDragonTransportPayload(payload, options = {}) {
     state.dragonRoundSessionId = incomingSessionId;
     state.dragonRoundAutoCashoutEnabled = Boolean(state.dragonAutoCashoutEnabled);
     state.dragonRoundAutoCashoutTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget);
-    state.dragonDisplayedSessionId = "";
-    state.dragonDisplayedMultiplier = 1;
   }
   if (!incomingSessionId) {
     state.dragonRoundSessionId = "";
-    state.dragonDisplayedSessionId = "";
-    state.dragonDisplayedMultiplier = 1;
   }
   if (payload?.config) {
     syncDragonConfigFromServer(payload.config, { overwriteDraft });
@@ -3245,36 +3239,6 @@ function getDragonRoundAutoSettings(session = state.dragonSession) {
     enabled: Boolean(state.dragonAutoCashoutEnabled),
     target: normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget)
   };
-}
-
-function getStableDragonMultiplier(sessionLike, phase = getDragonPhase(sessionLike?.content || sessionLike)) {
-  const sessionId = sessionLike?.id || "";
-  const gameState = sessionLike?.content || sessionLike;
-  const rawMultiplier = getDragonDisplayMultiplier(gameState, phase);
-
-  if (!sessionId) {
-    return rawMultiplier;
-  }
-
-  if (phase === "playing") {
-    if (state.dragonDisplayedSessionId !== sessionId) {
-      state.dragonDisplayedSessionId = sessionId;
-      state.dragonDisplayedMultiplier = rawMultiplier;
-      return rawMultiplier;
-    }
-
-    state.dragonDisplayedMultiplier = Math.max(Number(state.dragonDisplayedMultiplier || 1), rawMultiplier);
-    return state.dragonDisplayedMultiplier;
-  }
-
-  if (state.dragonDisplayedSessionId === sessionId) {
-    state.dragonDisplayedMultiplier = Math.max(Number(state.dragonDisplayedMultiplier || 1), rawMultiplier);
-    return state.dragonDisplayedMultiplier;
-  }
-
-  state.dragonDisplayedSessionId = sessionId;
-  state.dragonDisplayedMultiplier = rawMultiplier;
-  return rawMultiplier;
 }
 
 async function broadcastDragonTransportPayload(payload) {
@@ -3507,7 +3471,7 @@ function syncDragonModalLoop() {
     const collectibleNode = document.querySelector("[data-dragon-live-collectible]");
     const subtitleNode = document.querySelector("[data-dragon-live-subtitle]");
     if (multiplierNode) {
-      const multiplier = getStableDragonMultiplier(message, phase);
+      const multiplier = getDragonDisplayMultiplier(game, phase);
       multiplierNode.textContent = formatMultiplier(multiplier);
     }
     if (collectibleNode) {

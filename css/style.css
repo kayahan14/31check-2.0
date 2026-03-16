@@ -976,7 +976,7 @@ svg { display: block; }
 .dragon-modal-dragon {
   position: absolute;
   left: 24%;
-  top: 50%;
+  top: 56%;
   z-index: 1;
   font-size: 72px;
   transform: translateY(-50%);
@@ -1061,6 +1061,7 @@ svg { display: block; }
 .dragon-hub-scene .dragon-hub-dragon {
   left: 12%;
   right: auto;
+  top: 56%;
   font-size: 110px;
   z-index: 2;
   transform: translateY(-50%) scaleX(-1);
@@ -1651,6 +1652,7 @@ svg { display: block; }
   .dragon-hub-scene .dragon-hub-dragon {
     left: 8%;
     right: auto;
+    top: 58%;
     font-size: 88px;
   }
   .dragon-hub-scene .dragon-modal-fire {
