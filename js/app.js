@@ -56,7 +56,7 @@ const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: 10000,
   speedFactor: 1,
   testMode: false,
-  testMaxMultiplier: 10
+  testMaxMultiplier: 1.1
 };
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
@@ -152,6 +152,40 @@ async function bootstrap() {
   renderAdmin();
   renderUserModal();
   await initializeRuntime();
+}
+
+function snapshotRenderFocus() {
+  const activeElement = document.activeElement;
+  if (!activeElement || !(activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement)) {
+    return null;
+  }
+
+  if (!activeElement.id) return null;
+
+  return {
+    id: activeElement.id,
+    value: activeElement.value,
+    selectionStart: activeElement.selectionStart,
+    selectionEnd: activeElement.selectionEnd
+  };
+}
+
+function restoreRenderFocus(snapshot) {
+  if (!snapshot?.id) return;
+
+  const nextElement = document.getElementById(snapshot.id);
+  if (!nextElement || !(nextElement instanceof HTMLInputElement || nextElement instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  nextElement.focus({ preventScroll: true });
+  if (typeof snapshot.selectionStart === "number" && typeof snapshot.selectionEnd === "number") {
+    try {
+      nextElement.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+    } catch {
+      // Some input types do not support selection restore.
+    }
+  }
 }
 
 function decorateStaticUi() {
@@ -522,8 +556,9 @@ function render() {
     state.messagePanePinnedToBottom = isNearBottom(previousMessagesPane);
   }
 
-  const shouldRestoreComposerFocus = document.activeElement?.id === "composerInput" || state.keepComposerFocus;
-  const shouldRestoreSearchFocus = document.activeElement?.id === "messageSearchInput";
+  const focusSnapshot = snapshotRenderFocus();
+  const shouldRestoreComposerFocus = focusSnapshot?.id === "composerInput" || state.keepComposerFocus;
+  const shouldRestoreSearchFocus = focusSnapshot?.id === "messageSearchInput";
   const shouldStickToBottom = state.messagePanePinnedToBottom || state.forceScrollToBottom;
   const isDragonView = isCasinoDragonView();
   const channel = selectedChannel();
@@ -594,6 +629,7 @@ function render() {
 
   bindRuntimeUi();
   syncDragonModalLoop();
+  restoreRenderFocus(focusSnapshot);
   if (shouldRestoreComposerFocus) {
     focusComposer();
   }
@@ -824,8 +860,11 @@ function bindRuntimeUi() {
       const parsed = parseDragonAutoCashoutInput(dragonAutoInput.value);
       state.dragonAutoCashoutTarget = parsed;
       dragonAutoInput.value = formatDecimalInput(parsed);
+      const autoTargetLabel = document.querySelector("[data-dragon-auto-target-label]");
+      if (autoTargetLabel) {
+        autoTargetLabel.textContent = formatMultiplier(parsed);
+      }
       saveDragonAutoCashoutPreference();
-      render();
     };
     dragonAutoInput.addEventListener("change", syncDragonAutoInput);
     dragonAutoInput.addEventListener("blur", syncDragonAutoInput);
@@ -1816,7 +1855,7 @@ function renderDragonRealtimeView() {
         <div class="dragon-auto-panel">
           <div class="dragon-auto-copy">
             <span class="dragon-label">Oto su degerde cek</span>
-            <strong>${escapeHtml(formatMultiplier(autoTarget))}</strong>
+            <strong data-dragon-auto-target-label>${escapeHtml(formatMultiplier(autoTarget))}</strong>
           </div>
           <div class="dragon-auto-controls">
             <input id="dragonAutoCashoutInput" class="dragon-auto-input" type="text" inputmode="decimal" value="${escapeAttr(formatDecimalInput(autoTarget))}" placeholder="2.00">
@@ -2021,7 +2060,7 @@ async function handleDragonHubAction(action, options = {}) {
       throw new Error("Dragon action failed.");
     }
     const payload = await response.json();
-    state.dragonSession = payload.session || null;
+    state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload.session || null);
     syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
     render();
   } catch (error) {
@@ -2032,6 +2071,9 @@ async function handleDragonHubAction(action, options = {}) {
 }
 
 async function loadDragonSession({ initial = false } = {}) {
+  const previousLoading = state.dragonStateLoading;
+  const previousSessionKey = getDragonSessionRenderKey(state.dragonSession);
+  const previousConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
   if (initial) {
     state.dragonStateLoading = true;
     if (isCasinoDragonView()) render();
@@ -2049,7 +2091,15 @@ async function loadDragonSession({ initial = false } = {}) {
     console.warn("Dragon session load failed.", error);
   } finally {
     state.dragonStateLoading = false;
-    if (isCasinoDragonView()) render();
+    const nextSessionKey = getDragonSessionRenderKey(state.dragonSession);
+    const nextConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
+    const shouldRenderDragonView = isCasinoDragonView() && (
+      initial
+      || previousLoading !== state.dragonStateLoading
+      || previousSessionKey !== nextSessionKey
+      || previousConfigKey !== nextConfigKey
+    );
+    if (shouldRenderDragonView) render();
   }
 }
 
@@ -3006,7 +3056,7 @@ function normalizeDragonConfig(config) {
     lobbyMs: Math.min(60000, Math.max(1000, Math.round(Number(next.lobbyMs ?? DEFAULT_DRAGON_CONFIG.lobbyMs)))),
     speedFactor: Math.min(5, Math.max(0.1, Math.round(Number(next.speedFactor ?? DEFAULT_DRAGON_CONFIG.speedFactor) * 100) / 100)),
     testMode: Boolean(next.testMode),
-    testMaxMultiplier: Math.min(100, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
+    testMaxMultiplier: Math.min(10, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
   };
 }
 
@@ -3048,6 +3098,25 @@ function mergeDragonSessionWithLocal(currentSession, incomingSession) {
   }
 
   return incomingSession;
+}
+
+function getDragonSessionRenderKey(session) {
+  if (!session?.content) return "none";
+  const game = normalizeDragonState(session.content);
+  return JSON.stringify({
+    id: session.id,
+    revision: Number(game.revision || 0),
+    status: game.status,
+    participants: (game.participants || []).map((entry) => ({
+      id: entry.id,
+      status: entry.status,
+      cashoutMultiplier: entry.cashoutMultiplier,
+      cashoutValue: entry.cashoutValue
+    })),
+    resultSummary: game.resultSummary,
+    finalMultiplier: game.finalMultiplier,
+    crashAtMultiplier: game.crashAtMultiplier
+  });
 }
 
 function getLocalClearTimestamp(scopeKey, channelId) {
@@ -3094,7 +3163,7 @@ function normalizeMessageTimestamp(message) {
 function getDragonLiveMultiplier(gameState, now = Date.now()) {
   const game = normalizeDragonState(gameState);
   if (game.status === "crashed") {
-    return roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
+    return roundMultiplier(game.crashAtMultiplier || game.finalMultiplier || 1);
   }
   if (now < game.launchAtMs) {
     return 1;
@@ -3150,8 +3219,11 @@ function shouldDragonCrash(gameState, now = Date.now()) {
 function generateDragonCrashMultiplier(config = DEFAULT_DRAGON_CONFIG) {
   const normalizedConfig = normalizeDragonConfig(config);
   if (normalizedConfig.testMode) {
-    const range = Math.max(0.05, normalizedConfig.testMaxMultiplier - 1);
-    return roundMultiplier(1 + Math.random() * range);
+    const floorMultiplier = Math.min(10, Math.max(1.1, normalizedConfig.testMaxMultiplier));
+    if (floorMultiplier >= 10) {
+      return 10;
+    }
+    return roundMultiplier(floorMultiplier + Math.random() * (10 - floorMultiplier));
   }
   const raw = 0.99 / Math.max(0.04, 1 - Math.random());
   return roundMultiplier(Math.max(1.15, Math.min(25, raw)));

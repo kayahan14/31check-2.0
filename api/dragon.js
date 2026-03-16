@@ -9,7 +9,7 @@ const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: LOBBY_MS,
   speedFactor: 1,
   testMode: false,
-  testMaxMultiplier: 10
+  testMaxMultiplier: 1.1
 };
 
 globalThis.__dragonQueues ||= {};
@@ -339,7 +339,7 @@ function normalizeDragonConfig(config) {
     lobbyMs: Math.min(60000, Math.max(1000, Math.round(Number(next.lobbyMs ?? DEFAULT_DRAGON_CONFIG.lobbyMs)))),
     speedFactor: Math.min(5, Math.max(0.1, Math.round(Number(next.speedFactor ?? DEFAULT_DRAGON_CONFIG.speedFactor) * 100) / 100)),
     testMode: Boolean(next.testMode),
-    testMaxMultiplier: Math.min(100, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
+    testMaxMultiplier: Math.min(10, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
   };
 }
 
@@ -383,8 +383,11 @@ function hasDragonCrashedByNow(gameState, now = Date.now()) {
 function generateDragonCrashMultiplier(config = DEFAULT_DRAGON_CONFIG) {
   const normalizedConfig = normalizeDragonConfig(config);
   if (normalizedConfig.testMode) {
-    const range = Math.max(0.05, normalizedConfig.testMaxMultiplier - 1);
-    return roundMultiplier(1 + Math.random() * range);
+    const floorMultiplier = Math.min(10, Math.max(1.1, normalizedConfig.testMaxMultiplier));
+    if (floorMultiplier >= 10) {
+      return 10;
+    }
+    return roundMultiplier(floorMultiplier + Math.random() * (10 - floorMultiplier));
   }
 
   const raw = 0.99 / Math.max(0.04, 1 - Math.random());
