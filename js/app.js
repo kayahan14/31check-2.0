@@ -2354,6 +2354,7 @@ function normalizeDragonState(content) {
   game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier(game.config);
   game.finalMultiplier = Number(game.finalMultiplier) > 0 ? Number(game.finalMultiplier) : 1;
   game.acceleratedAtMs = Number(game.acceleratedAtMs) > 0 ? Number(game.acceleratedAtMs) : 0;
+  game.acceleratedFromEffectiveElapsed = Number(game.acceleratedFromEffectiveElapsed) > 0 ? Number(game.acceleratedFromEffectiveElapsed) : 0;
   game.collectible = Number(game.collectible) >= 0 ? Number(game.collectible) : game.baseStake;
   game.participants = Array.isArray(game.participants) ? game.participants.map((entry) => ({
     id: entry?.id || uid(),
@@ -3117,7 +3118,9 @@ function getDragonEffectiveElapsed(game, now = getDragonNow()) {
     return getDragonBaseEffectiveElapsed(game, elapsedSeconds);
   }
 
-  const baseBeforeAcceleration = getDragonBaseEffectiveElapsed(game, Math.max(0, acceleratedAtMs - startedAtMs) / 1000);
+  const baseBeforeAcceleration = Number(game?.acceleratedFromEffectiveElapsed) > 0
+    ? Number(game.acceleratedFromEffectiveElapsed)
+    : getDragonBaseEffectiveElapsed(game, Math.max(0, acceleratedAtMs - startedAtMs) / 1000);
   const acceleratedSeconds = Math.max(0, now - acceleratedAtMs) / 1000;
   return baseBeforeAcceleration + (acceleratedSeconds * DRAGON_ALL_CASHED_OUT_SPEED);
 }
@@ -3160,6 +3163,10 @@ function mergeDragonSessionWithLocal(currentSession, incomingSession) {
   }
 
   if (Number(currentGame.acceleratedAtMs || 0) > Number(incomingGame.acceleratedAtMs || 0)) {
+    return currentSession;
+  }
+
+  if (Number(currentGame.acceleratedFromEffectiveElapsed || 0) > Number(incomingGame.acceleratedFromEffectiveElapsed || 0)) {
     return currentSession;
   }
 
@@ -3380,6 +3387,7 @@ function applyOptimisticDragonCashout(session, userId, multiplier) {
   participant.cashoutMultiplier = roundMultiplier(multiplier || getDragonLiveMultiplier(game));
   participant.cashoutValue = roundCoinValue(game.baseStake * participant.cashoutMultiplier);
   if ((game.participants || []).every((entry) => entry.status !== "joined")) {
+    game.acceleratedFromEffectiveElapsed = getDragonEffectiveElapsed(game, getDragonNow());
     game.acceleratedAtMs = getDragonNow();
   }
   game.revision += 1;

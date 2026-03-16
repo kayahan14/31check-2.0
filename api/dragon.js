@@ -214,6 +214,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     participant.cashoutMultiplier = multiplier;
     participant.cashoutValue = roundCoinValue(game.baseStake * multiplier);
     if ((game.participants || []).every((entry) => entry.status !== "joined")) {
+      game.acceleratedFromEffectiveElapsed = getDragonEffectiveElapsed(game, now);
       game.acceleratedAtMs = now;
     }
     game.revision += 1;
@@ -343,6 +344,7 @@ function normalizeDragonState(content, now = Date.now()) {
   game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier(game.config);
   game.finalMultiplier = Number(game.finalMultiplier) > 0 ? Number(game.finalMultiplier) : 1;
   game.acceleratedAtMs = Number(game.acceleratedAtMs) > 0 ? Number(game.acceleratedAtMs) : 0;
+  game.acceleratedFromEffectiveElapsed = Number(game.acceleratedFromEffectiveElapsed) > 0 ? Number(game.acceleratedFromEffectiveElapsed) : 0;
   game.resultSummary ||= "";
   game.participants = Array.isArray(game.participants) ? game.participants.map((entry) => ({
     id: entry?.id || "user",
@@ -419,7 +421,9 @@ function getDragonEffectiveElapsed(game, now = Date.now()) {
     return getDragonBaseEffectiveElapsed(game, elapsedSeconds);
   }
 
-  const baseBeforeAcceleration = getDragonBaseEffectiveElapsed(game, Math.max(0, acceleratedAtMs - startedAtMs) / 1000);
+  const baseBeforeAcceleration = Number(game?.acceleratedFromEffectiveElapsed) > 0
+    ? Number(game.acceleratedFromEffectiveElapsed)
+    : getDragonBaseEffectiveElapsed(game, Math.max(0, acceleratedAtMs - startedAtMs) / 1000);
   const acceleratedSeconds = Math.max(0, now - acceleratedAtMs) / 1000;
   return baseBeforeAcceleration + (acceleratedSeconds * DRAGON_ALL_CASHED_OUT_SPEED);
 }
