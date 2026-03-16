@@ -67,6 +67,7 @@ const state = {
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
   forceScrollToBottom: false,
+  remoteSyncEpoch: 0,
   highlightedMessageId: "",
   animatingCardKeys: [],
   blackjackActionLocks: {},
@@ -324,6 +325,12 @@ async function loadPersistedMessages({ initial = false } = {}) {
     render();
   }
 
+  if (!initial && hasActiveBlackjackInteraction()) {
+    return;
+  }
+
+  const requestEpoch = state.remoteSyncEpoch;
+
   try {
     const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}&ts=${Date.now()}`, {
       cache: "no-store"
@@ -331,6 +338,9 @@ async function loadPersistedMessages({ initial = false } = {}) {
     if (!response.ok) return;
 
     const payload = await response.json();
+    if (requestEpoch !== state.remoteSyncEpoch) {
+      return;
+    }
     syncRemoteMessages(payload.channels || {});
   } finally {
     if (state.isMessagesLoading) {
@@ -345,6 +355,7 @@ function startMessageSync() {
   if (!state.scopeKey) return;
 
   state.messageSyncHandle = window.setInterval(() => {
+    if (hasActiveBlackjackInteraction()) return;
     void loadPersistedMessages();
   }, 1000);
 
@@ -361,6 +372,7 @@ function stopMessageSync() {
 }
 
 function handleVisibilitySync() {
+  if (hasActiveBlackjackInteraction()) return;
   if (document.visibilityState === "visible") {
     void loadPersistedMessages();
   }
@@ -1276,11 +1288,13 @@ async function handleBlackjackAction(messageId, action) {
   };
 
   markAnimatingCards(collectBlackjackCardChanges(message, nextMessage));
+  state.remoteSyncEpoch += 1;
   state.blackjackActionLocks[message.id] = true;
   state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
   await persistMessageUpdate(nextMessage);
   delete state.blackjackActionLocks[message.id];
+  void loadPersistedMessages();
 }
 
 function findActiveBlackjackMessageForCurrentUser() {
@@ -1765,6 +1779,10 @@ function findMessageById(messageId) {
 function hasMeaningfulMessageDifference(currentMessage, nextMessage) {
   if (!currentMessage || !nextMessage) return true;
   return JSON.stringify(currentMessage) !== JSON.stringify(nextMessage);
+}
+
+function hasActiveBlackjackInteraction() {
+  return Object.keys(state.blackjackActionLocks || {}).length > 0 || Object.keys(state.pendingUpdatedMessages || {}).length > 0;
 }
 
 function normalizeMessageTimestamp(message) {
