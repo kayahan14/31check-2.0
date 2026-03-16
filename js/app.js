@@ -47,8 +47,7 @@ const MINES_MINE_COUNT = 2;
 const MINES_BASE_STAKE = 100;
 const MINES_MINE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8];
 const DRAGON_BASE_STAKE = 100;
-const DRAGON_TICK_MS = 200;
-const DRAGON_GROWTH_RATE = 0.31;
+const DRAGON_TICK_MS = 400;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 
@@ -75,6 +74,8 @@ const state = {
   searchQuery: "",
   sidebarCollapsed: false,
   minesSetupOpen: false,
+  dragonModalMessageId: "",
+  dragonModalRaf: 0,
   preferredMineCount: loadPreferredMineCount(),
   toastMessage: "",
   keepComposerFocus: false,
@@ -385,6 +386,7 @@ function stopMessageSync() {
 
   document.removeEventListener("visibilitychange", handleVisibilitySync);
   stopDragonTicker();
+  stopDragonModalLoop();
 }
 
 function handleVisibilitySync() {
@@ -517,10 +519,12 @@ function render() {
         </aside>
       </div>
     </main>
+    ${renderDragonModal()}
     ${renderToast()}
   `;
 
   bindRuntimeUi();
+  syncDragonModalLoop();
   if (shouldRestoreComposerFocus) {
     focusComposer();
   }
@@ -573,7 +577,7 @@ function renderChannelLink(channel) {
 
 function renderMessages(messages) {
   return `<div class="message-stack">${messages.map((message) => `
-      <article class="message ${message.type === "game" ? "message-game" : ""} ${message.type === "blackjack" ? "message-blackjack" : ""} ${message.type === "mines" ? "message-mines" : ""} ${message.id === state.highlightedMessageId ? "message-highlighted" : ""} ${state.searchQuery.trim() ? "message-search-hit" : ""}" data-message-id="${escapeAttr(message.id)}">
+      <article class="message ${message.type === "game" ? "message-game" : ""} ${message.type === "blackjack" ? "message-blackjack" : ""} ${message.type === "mines" ? "message-mines" : ""} ${message.type === "dragon" ? "message-dragon" : ""} ${message.id === state.highlightedMessageId ? "message-highlighted" : ""} ${state.searchQuery.trim() ? "message-search-hit" : ""}" data-message-id="${escapeAttr(message.id)}">
         ${renderAvatar(message.avatarUrl, message.avatar || message.author)}
         <div class="message-body">
           <div class="message-meta">
@@ -728,6 +732,26 @@ function bindRuntimeUi() {
       await handleDragonJoin(messageId);
     });
   });
+  app.querySelectorAll("[data-open-dragon-modal]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const messageId = button.dataset.openDragonModal;
+      if (!messageId) return;
+      openDragonModal(messageId);
+    });
+  });
+  const dragonModalBackdrop = document.getElementById("dragonModalBackdrop");
+  if (dragonModalBackdrop) {
+    dragonModalBackdrop.addEventListener("click", (event) => {
+      if (event.target === dragonModalBackdrop) {
+        closeDragonModal();
+      }
+    });
+  }
+  const closeDragonModalButton = document.getElementById("closeDragonModalButton");
+  if (closeDragonModalButton) {
+    closeDragonModalButton.addEventListener("click", closeDragonModal);
+  }
 
   const form = document.getElementById("composerForm");
   const input = document.getElementById("composerInput");
@@ -763,6 +787,10 @@ function bindRuntimeUi() {
   }
   app.querySelectorAll("[data-message-id]").forEach((messageRow) => {
     messageRow.addEventListener("click", () => {
+      if (messageRow.classList.contains("message-dragon")) {
+        openDragonModal(messageRow.dataset.messageId);
+        return;
+      }
       if (!state.searchQuery.trim()) return;
       focusMessage(messageRow.dataset.messageId);
     });
@@ -908,22 +936,24 @@ async function sendGameMessage(game, label) {
     return;
   }
 
-  if (game === "dragon") {
-    const activeDragonMessage = findVisibleActiveDragonMessage();
-    if (activeDragonMessage) {
-      const activeDragon = normalizeDragonState(activeDragonMessage.content);
-      const alreadyJoined = Boolean(getDragonParticipant(activeDragon, state.currentUser.id));
-      showToast(alreadyJoined ? "Önce aktif ejderha oyununu bitir." : "Aktif ejderhaya katil.");
+    if (game === "dragon") {
+      const activeDragonMessage = findVisibleActiveDragonMessage();
+      if (activeDragonMessage) {
+        const activeDragon = normalizeDragonState(activeDragonMessage.content);
+        const alreadyJoined = Boolean(getDragonParticipant(activeDragon, state.currentUser.id));
+        openDragonModal(activeDragonMessage.id);
+        showToast(alreadyJoined ? "Aktif ejderha acildi." : "Aktif ejderhaya katil.");
+        return;
+      }
+      const message = makeMessage({
+        type: "dragon",
+        content: createDragonGameState()
+      });
+      appendLocalMessage(message);
+      state.dragonModalMessageId = message.id;
+      await persistMessage(message);
       return;
     }
-    const message = makeMessage({
-      type: "dragon",
-      content: createDragonGameState()
-    });
-    appendLocalMessage(message);
-    await persistMessage(message);
-    return;
-  }
 
   const message = makeMessage({ type: "game", content: buildGameMessage(game, label) });
   appendLocalMessage(message);
@@ -1514,30 +1544,19 @@ function renderMinesMessage(message) {
 function renderDragonMessage(message) {
   const game = normalizeDragonState(message.content);
   const phase = getDragonPhase(game);
-  const participant = getDragonParticipant(game, state.currentUser.id);
-  const joined = Boolean(participant);
+  const joinedCount = (game.participants || []).length;
+  const cashedCount = (game.participants || []).filter((entry) => entry.status === "cashed_out").length;
   const crashNow = phase === "playing" && shouldDragonCrash(game);
-  const multiplier = phase === "playing" && !crashNow
+  const multiplier = phase === "playing"
     ? getDragonLiveMultiplier(game)
     : roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
-  const collectible = participant?.status === "cashed_out"
-    ? participant.cashoutValue
-    : phase === "playing" && joined && !crashNow
-      ? roundCoinValue(game.baseStake * multiplier)
-      : 0;
-  const disabled = state.isMessagesLoading || Boolean(state.interactiveActionLocks[message.id]);
   const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
-  const tone = game.status === "crashed" || crashNow ? "is-loss" : participant?.status === "cashed_out" ? "is-win" : "";
-  const statusLabel = participant?.status === "cashed_out"
-    ? `${formatMultiplier(participant.cashoutMultiplier)} degerinde cektin`
-    : phase === "lobby"
+  const tone = game.status === "crashed" ? "is-loss" : cashedCount ? "is-win" : "";
+  const statusLabel = phase === "lobby"
     ? `Alev ${secondsLeft}s sonra basliyor`
     : phase === "playing" && !crashNow
       ? "Ejderha ates ufleyerek ilerliyor"
       : (game.resultSummary || "EJDERHA PATLADI 💥");
-  const primaryAction = phase === "lobby"
-    ? `<button type="button" class="btn dragon-collect" data-dragon-join data-message-id="${escapeAttr(message.id)}" ${disabled || joined ? "disabled" : ""}>${joined ? "Katildin" : "Katil"}</button>`
-    : `<button type="button" class="btn dragon-collect ${tone}" data-dragon-collect data-message-id="${escapeAttr(message.id)}" ${disabled || !joined || participant?.status !== "joined" || crashNow ? "disabled" : ""}>Cek</button>`;
 
   return `
     <div class="dragon-card ${tone}">
@@ -1548,12 +1567,10 @@ function renderDragonMessage(message) {
         </div>
         <div class="dragon-multiplier ${tone}">${escapeHtml(formatMultiplier(multiplier))}</div>
       </div>
-      <div class="dragon-scene ${phase === "playing" && !crashNow ? "is-breathing" : "is-ended"}">
-        <div class="dragon-emoji">${phase === "playing" && !crashNow ? "🐉" : crashNow || game.status === "crashed" ? "💥" : "🐉"}</div>
-        <div class="dragon-fire" aria-hidden="true"><span></span><span></span><span></span></div>
-      </div>
       <div class="dragon-participants">
-        ${(game.participants || []).map((entry) => renderDragonParticipant(entry)).join("")}
+        <span class="dragon-summary-pill">${escapeHtml(String(joinedCount))} katilim</span>
+        <span class="dragon-summary-pill">${escapeHtml(String(cashedCount))} cekis</span>
+        ${(game.participants || []).slice(0, 4).map((entry) => renderDragonParticipant(entry)).join("")}
       </div>
       <div class="dragon-stats">
         <div class="dragon-stat">
@@ -1561,10 +1578,10 @@ function renderDragonMessage(message) {
           <strong>${escapeHtml(formatCoinValue(game.baseStake))}</strong>
         </div>
         <div class="dragon-stat">
-          <span class="dragon-label">${phase === "lobby" ? "Katilim" : "Cekilebilir"}</span>
-          <strong>${escapeHtml(formatCoinValue(collectible))}</strong>
+          <span class="dragon-label">Durum</span>
+          <strong>${escapeHtml(phase === "lobby" ? `${secondsLeft}s` : formatMultiplier(multiplier))}</strong>
         </div>
-        ${primaryAction}
+        <button type="button" class="btn dragon-open" data-open-dragon-modal="${escapeAttr(message.id)}">Ac</button>
       </div>
     </div>
   `;
@@ -1578,6 +1595,69 @@ function renderDragonParticipant(entry) {
       ? " 💥"
       : "";
   return `<span class="dragon-participant ${tone}">${escapeHtml(entry.name)}${escapeHtml(suffix)}</span>`;
+}
+
+function renderDragonModal() {
+  const message = state.dragonModalMessageId ? findMessageById(state.dragonModalMessageId) : null;
+  if (!message || message.type !== "dragon") return "";
+
+  const game = normalizeDragonState(message.content);
+  const phase = getDragonPhase(game);
+  const participant = getDragonParticipant(game, state.currentUser.id);
+  const joined = Boolean(participant);
+  const multiplier = phase === "playing"
+    ? getDragonLiveMultiplier(game)
+    : roundMultiplier(game.finalMultiplier || 1);
+  const collectible = participant?.status === "cashed_out"
+    ? participant.cashoutValue
+    : phase === "playing" && participant?.status === "joined"
+      ? roundCoinValue(game.baseStake * multiplier)
+      : 0;
+  const disabled = state.isMessagesLoading || Boolean(state.interactiveActionLocks[message.id]);
+  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
+  const joinedCount = (game.participants || []).length;
+  const action = phase === "lobby"
+    ? `<button type="button" class="btn dragon-modal-action" data-dragon-join data-message-id="${escapeAttr(message.id)}" ${disabled || joined ? "disabled" : ""}>${joined ? "Katildin" : "Katil"}</button>`
+    : `<button type="button" class="btn dragon-modal-action" data-dragon-collect data-message-id="${escapeAttr(message.id)}" ${disabled || !joined || participant?.status !== "joined" ? "disabled" : ""}>Cek</button>`;
+
+  return `
+    <div class="dragon-modal-backdrop" id="dragonModalBackdrop">
+      <div class="dragon-modal" role="dialog" aria-modal="true" aria-label="Ejderha oyunu">
+        <button type="button" class="dragon-modal-close" id="closeDragonModalButton" aria-label="Kapat">${icon("close", 18)}</button>
+        <div class="dragon-modal-header">
+          <div>
+            <div class="dragon-modal-title">Ejderha</div>
+            <div class="dragon-modal-subtitle">${escapeHtml(phase === "lobby" ? `Baslangica ${secondsLeft}s var` : (game.resultSummary || "Ejderha oyunda"))}</div>
+          </div>
+          <div class="dragon-modal-multiplier" data-dragon-live-multiplier>${escapeHtml(formatMultiplier(multiplier))}</div>
+        </div>
+        <div class="dragon-modal-scene ${phase === "playing" ? "is-live" : ""} ${game.status === "crashed" ? "is-crashed" : ""}">
+          <div class="dragon-modal-dragon">${game.status === "crashed" ? "💥" : "🐉"}</div>
+          <div class="dragon-modal-fire" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        </div>
+        <div class="dragon-modal-stats">
+          <div class="dragon-stat">
+            <span class="dragon-label">Deger</span>
+            <strong>${escapeHtml(formatCoinValue(game.baseStake))}</strong>
+          </div>
+          <div class="dragon-stat">
+            <span class="dragon-label">${phase === "lobby" ? "Sen" : "Cekilebilir"}</span>
+            <strong data-dragon-live-collectible>${escapeHtml(formatCoinValue(collectible))}</strong>
+          </div>
+          <div class="dragon-stat">
+            <span class="dragon-label">Oyuncu</span>
+            <strong>${escapeHtml(String(joinedCount))}</strong>
+          </div>
+        </div>
+        <div class="dragon-modal-actions">
+          ${action}
+        </div>
+        <div class="dragon-participants is-modal">
+          ${(game.participants || []).map((entry) => renderDragonParticipant(entry)).join("")}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderMinesPills(game) {
@@ -2447,6 +2527,19 @@ function findVisibleActiveDragonMessage() {
   }) || null;
 }
 
+function openDragonModal(messageId) {
+  const message = findMessageById(messageId);
+  if (!message || message.type !== "dragon") return;
+  state.dragonModalMessageId = messageId;
+  render();
+}
+
+function closeDragonModal() {
+  state.dragonModalMessageId = "";
+  stopDragonModalLoop();
+  render();
+}
+
 function applyLocalMessageFilters(messages, channelId) {
   const clearedAt = getLocalClearTimestamp(state.scopeKey, channelId);
   if (!clearedAt) return messages;
@@ -2557,12 +2650,10 @@ function startDragonTicker() {
     const messages = getVisibleMessagesForChannel(selectedChannel()?.id).filter((message) => message?.type === "dragon");
     if (!messages.length) return;
 
-    let shouldRender = false;
     for (const message of messages) {
       const game = normalizeDragonState(message.content);
       const phase = getDragonPhase(game);
       if (phase === "finished" || game.status === "crashed") continue;
-      shouldRender = true;
       if (state.interactiveActionLocks[message.id] || state.pendingUpdatedMessages[message.id]) continue;
       if (phase === "lobby" && Date.now() >= game.launchAtMs) {
         state.interactiveActionLocks[message.id] = true;
@@ -2574,14 +2665,10 @@ function startDragonTicker() {
       }
       if (!shouldDragonCrash(game)) continue;
       state.interactiveActionLocks[message.id] = true;
-      void performDragonAction(message.id, "dragon_tick")
+        void performDragonAction(message.id, "dragon_tick")
         .finally(() => {
           delete state.interactiveActionLocks[message.id];
         });
-    }
-
-    if (shouldRender) {
-      render();
     }
   }, DRAGON_TICK_MS);
 }
@@ -2590,6 +2677,54 @@ function stopDragonTicker() {
   if (!state.dragonTickerHandle) return;
   window.clearInterval(state.dragonTickerHandle);
   state.dragonTickerHandle = null;
+}
+
+function syncDragonModalLoop() {
+  if (!state.dragonModalMessageId) {
+    stopDragonModalLoop();
+    return;
+  }
+
+  if (state.dragonModalRaf) return;
+
+  const tick = () => {
+    state.dragonModalRaf = 0;
+    if (!state.dragonModalMessageId) return;
+
+    const message = findMessageById(state.dragonModalMessageId);
+    if (!message || message.type !== "dragon") {
+      closeDragonModal();
+      return;
+    }
+
+    const game = normalizeDragonState(message.content);
+    const phase = getDragonPhase(game);
+    const participant = getDragonParticipant(game, state.currentUser.id);
+    const multiplierNode = document.querySelector("[data-dragon-live-multiplier]");
+    const collectibleNode = document.querySelector("[data-dragon-live-collectible]");
+    if (multiplierNode) {
+      const multiplier = phase === "playing" ? getDragonLiveMultiplier(game) : roundMultiplier(game.finalMultiplier || 1);
+      multiplierNode.textContent = formatMultiplier(multiplier);
+    }
+    if (collectibleNode) {
+      const collectible = participant?.status === "cashed_out"
+        ? participant.cashoutValue
+        : phase === "playing" && participant?.status === "joined"
+          ? roundCoinValue(game.baseStake * getDragonLiveMultiplier(game))
+          : 0;
+      collectibleNode.textContent = formatCoinValue(collectible);
+    }
+
+    state.dragonModalRaf = window.requestAnimationFrame(tick);
+  };
+
+  state.dragonModalRaf = window.requestAnimationFrame(tick);
+}
+
+function stopDragonModalLoop() {
+  if (!state.dragonModalRaf) return;
+  window.cancelAnimationFrame(state.dragonModalRaf);
+  state.dragonModalRaf = 0;
 }
 
 function getDragonPhase(gameState, now = Date.now()) {
