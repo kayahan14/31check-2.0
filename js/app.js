@@ -69,6 +69,7 @@ const state = {
   forceScrollToBottom: false,
   highlightedMessageId: "",
   animatingCardKeys: [],
+  blackjackActionLocks: {},
   pendingUpdatedMessages: {},
   pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
@@ -811,7 +812,8 @@ function appendLocalMessage(message) {
   render();
 }
 
-function replaceLocalMessage(message) {
+function replaceLocalMessage(message, options = {}) {
+  const { shouldRender = true } = options;
   const channelId = message.channelId || selectedChannel()?.id;
   if (!channelId) return;
 
@@ -826,10 +828,14 @@ function replaceLocalMessage(message) {
     return sortMessages(nextList);
   };
 
-  state.messagesByChannel[channelId] = replaceInList(state.messagesByChannel[channelId]);
+  const previousList = state.messagesByChannel[channelId] || [];
+  const nextList = replaceInList(previousList);
+  state.messagesByChannel[channelId] = nextList;
   state.pendingMessagesByChannel[channelId] = (state.pendingMessagesByChannel[channelId] || [])
     .filter((entry) => entry.id !== message.id);
-  render();
+  if (shouldRender && JSON.stringify(previousList) !== JSON.stringify(nextList)) {
+    render();
+  }
 }
 
 async function persistMessage(message) {
@@ -871,8 +877,11 @@ async function persistMessageUpdate(message) {
 
     const payload = await response.json();
     delete state.pendingUpdatedMessages[message.id];
-    replaceLocalMessage(payload.message || message);
-    return payload.message || message;
+    const storedMessage = payload.message || message;
+    if (hasMeaningfulMessageDifference(findMessageById(message.id), storedMessage)) {
+      replaceLocalMessage(storedMessage);
+    }
+    return storedMessage;
   } catch (error) {
     delete state.pendingUpdatedMessages[message.id];
     console.warn("Message update failed.", error);
@@ -1240,7 +1249,7 @@ function renderPlayingCard(messageId, card) {
 }
 
 function renderBlackjackActionButton(messageId, action, enabled, ownerCanPlay) {
-  const disabled = !enabled || !ownerCanPlay || Boolean(state.pendingUpdatedMessages[messageId]);
+  const disabled = !enabled || !ownerCanPlay;
   const labels = {
     hit: "Hit",
     stand: "Stand",
@@ -1253,6 +1262,7 @@ function renderBlackjackActionButton(messageId, action, enabled, ownerCanPlay) {
 async function handleBlackjackAction(messageId, action) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "blackjack") return;
+  if (state.blackjackActionLocks[messageId]) return;
 
   const game = normalizeBlackjackState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status === "finished") return;
@@ -1266,9 +1276,11 @@ async function handleBlackjackAction(messageId, action) {
   };
 
   markAnimatingCards(collectBlackjackCardChanges(message, nextMessage));
+  state.blackjackActionLocks[message.id] = true;
   state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
   await persistMessageUpdate(nextMessage);
+  delete state.blackjackActionLocks[message.id];
 }
 
 function findActiveBlackjackMessageForCurrentUser() {
@@ -1748,6 +1760,11 @@ function findMessageById(messageId) {
     if (message) return message;
   }
   return null;
+}
+
+function hasMeaningfulMessageDifference(currentMessage, nextMessage) {
+  if (!currentMessage || !nextMessage) return true;
+  return JSON.stringify(currentMessage) !== JSON.stringify(nextMessage);
 }
 
 function normalizeMessageTimestamp(message) {
