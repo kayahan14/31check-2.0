@@ -1036,6 +1036,30 @@ svg { display: block; }
 .dragon-participants.is-modal {
   margin-top: 14px;
 }
+.dragon-screen {
+  flex: 1;
+  display: flex;
+  min-height: 100%;
+  padding: 24px;
+}
+.dragon-screen-inner,
+.dragon-hub-empty {
+  width: min(860px, 100%);
+  margin: 0 auto;
+}
+.dragon-screen .dragon-modal-scene {
+  min-height: 320px;
+}
+.dragon-hub-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #1d1629, #130f1b);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
 .toast {
   position: fixed;
   left: 50%;

@@ -1,6 +1,8 @@
 ﻿import { DiscordSDK, Events } from "@discord/embedded-app-sdk";
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://hjlxrgzxyafedqamlzer.supabase.co";
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_6e-aU1BGjgWj6tRHdYnD6Q_q5fSXo5X";
 const MOCK_MODE = new URLSearchParams(window.location.search).get("mock") === "1" || !DISCORD_CLIENT_ID;
 const ADMIN_USER_IDS = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USER_IDS || "");
 const ADMIN_USERNAMES = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USERNAMES || "astrian");
@@ -30,9 +32,11 @@ const DEFAULT_MEMBERS = [
 const GAME_BUTTONS = [
   { id: "blackjack", label: "🃏 Blackjack", game: "blackjack" },
   { id: "mines", label: "💣 Mines", game: "mines" },
-  { id: "dragon", label: "🐉 Ejderha", game: "dragon" },
   { id: "dice", label: "🎲 Zar", game: "dice" },
   { id: "case", label: "🎁 Kasa", game: "case" }
+];
+const CASINO_ITEMS = [
+  { id: "casino:dragon", label: "🐉 Ejderha" }
 ];
 
 const BLACKJACK_SUITS = [
@@ -50,6 +54,7 @@ const DRAGON_BASE_STAKE = 100;
 const DRAGON_TICK_MS = 400;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
+const DRAGON_CHANNEL_ID = "casino:dragon";
 
 const FALLBACK_MESSAGE = {
   id: uid(),
@@ -68,6 +73,10 @@ const state = {
   scopeKey: "local-preview",
   messageSyncHandle: null,
   dragonTickerHandle: null,
+  dragonRealtimeClient: null,
+  dragonRealtimeChannel: null,
+  dragonSession: null,
+  dragonStateLoading: true,
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
@@ -171,6 +180,7 @@ async function initializeRuntime() {
     await loadPersistedMessages({ initial: true });
     state.membersLoading = false;
     startMessageSync();
+    await initializeDragonTransport();
     render();
     return;
   }
@@ -191,6 +201,7 @@ async function initializeRuntime() {
     await hydrateParticipants();
     await loadPersistedMessages({ initial: true });
     startMessageSync();
+    await initializeDragonTransport();
     render();
     renderUserModal();
   } catch (error) {
@@ -203,6 +214,7 @@ async function initializeRuntime() {
     state.membersLoading = false;
     await loadPersistedMessages({ initial: true });
     startMessageSync();
+    await initializeDragonTransport();
     render();
   }
 }
@@ -375,7 +387,6 @@ function startMessageSync() {
   }, 1000);
 
   document.addEventListener("visibilitychange", handleVisibilitySync);
-  startDragonTicker();
 }
 
 function stopMessageSync() {
@@ -385,7 +396,6 @@ function stopMessageSync() {
   }
 
   document.removeEventListener("visibilitychange", handleVisibilitySync);
-  stopDragonTicker();
   stopDragonModalLoop();
 }
 
@@ -458,8 +468,9 @@ function render() {
   const shouldRestoreComposerFocus = document.activeElement?.id === "composerInput" || state.keepComposerFocus;
   const shouldRestoreSearchFocus = document.activeElement?.id === "messageSearchInput";
   const shouldStickToBottom = state.messagePanePinnedToBottom || state.forceScrollToBottom;
+  const isDragonView = isCasinoDragonView();
   const channel = selectedChannel();
-  const rawMessages = applyLocalMessageFilters(state.messagesByChannel[channel?.id] || [], channel?.id);
+  const rawMessages = isDragonView ? [] : applyLocalMessageFilters(state.messagesByChannel[channel?.id] || [], channel?.id).filter((message) => message.type !== "dragon");
   const messages = filterMessages(rawMessages, state.searchQuery);
   const composerDisabled = state.isMessagesLoading;
 
@@ -488,6 +499,7 @@ function render() {
     </aside>
     <main class="main">
       <div class="main-panel">
+        ${isDragonView ? renderDragonRealtimeView() : `
         <section class="chat">
           <header class="chat-header">
             <div class="chat-header-left">
@@ -516,7 +528,7 @@ function render() {
         </section>
         <aside class="members">
           <div class="members-scroll">${renderMembers()}</div>
-        </aside>
+        </aside>`}
       </div>
     </main>
     ${renderDragonModal()}
@@ -568,11 +580,21 @@ function renderChannelSections() {
       </div>
       ${rootItems}
     </div>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">${icon("chevron-down", 12)}<span>Casino</span></div>
+      </div>
+      ${CASINO_ITEMS.map(renderCasinoLink).join("")}
+    </div>
     <div class="section"></div>`;
 }
 
 function renderChannelLink(channel) {
   return `<a class="channel ${channel.id === state.selectedChannelId ? "active" : ""}" href="${channelHref(channel.id)}" data-channel-id="${channel.id}">${icon("hash", 20)}<span class="channel-label">${escapeHtml(channel.name)}</span></a>`;
+}
+
+function renderCasinoLink(item) {
+  return `<a class="channel ${item.id === state.selectedChannelId ? "active" : ""}" href="${channelHref(item.id)}" data-channel-id="${item.id}">${icon("gift", 20)}<span class="channel-label">${escapeHtml(item.label)}</span></a>`;
 }
 
 function renderMessages(messages) {
@@ -732,6 +754,13 @@ function bindRuntimeUi() {
       await handleDragonJoin(messageId);
     });
   });
+  app.querySelectorAll("[data-dragon-hub-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.dataset.dragonHubAction;
+      if (!action || action === "noop") return;
+      await handleDragonHubAction(action);
+    });
+  });
   app.querySelectorAll("[data-open-dragon-modal]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -795,6 +824,9 @@ function bindRuntimeUi() {
       focusMessage(messageRow.dataset.messageId);
     });
   });
+  if (!form || !input) {
+    return;
+  }
   input.addEventListener("input", () => {
     state.composerDraft = input.value;
   });
@@ -1112,19 +1144,25 @@ function buildGameMessage(game, label) {
 }
 
 function selectChannel(id) {
-  if (!state.channels.find((channel) => channel.id === id)) return;
+  const validChannel = state.channels.find((channel) => channel.id === id);
+  const validCasinoItem = CASINO_ITEMS.find((item) => item.id === id);
+  if (!validChannel && !validCasinoItem) return;
   state.selectedChannelId = id;
   syncUrl(id);
   render();
 }
 
 function selectedChannel() {
-  return state.channels.find((channel) => channel.id === state.selectedChannelId) || state.channels[0] || null;
+  return state.channels.find((channel) => channel.id === state.selectedChannelId) || null;
+}
+
+function isCasinoDragonView(id = state.selectedChannelId) {
+  return id === DRAGON_CHANNEL_ID;
 }
 
 function initialChannelId() {
-  const fromHash = window.location.hash.match(/channel\/(\d+)/);
-  const fromPath = window.location.pathname.match(/channel\/(\d+)/);
+  const fromHash = window.location.hash.match(/channel\/([^/?#]+)/);
+  const fromPath = window.location.pathname.match(/channel\/([^/?#]+)/);
   return fromHash?.[1] || fromPath?.[1] || "1";
 }
 
@@ -1597,6 +1635,80 @@ function renderDragonParticipant(entry) {
   return `<span class="dragon-participant ${tone}">${escapeHtml(entry.name)}${escapeHtml(suffix)}</span>`;
 }
 
+function renderDragonRealtimeView() {
+  const session = state.dragonSession;
+  if (state.dragonStateLoading) {
+    return `<section class="dragon-screen"><div class="chat-loading"><div class="chat-loading-spinner"></div><div class="chat-loading-text">Ejderha yukleniyor...</div></div></section>`;
+  }
+
+  if (!session) {
+    return `
+      <section class="dragon-screen">
+        <div class="dragon-hub-empty">
+          <div class="dragon-modal-title">Ejderha</div>
+          <div class="dragon-modal-subtitle">Canli oyun burada akacak.</div>
+          <button type="button" class="btn dragon-modal-action" data-dragon-hub-action="start">Baslat</button>
+        </div>
+      </section>
+    `;
+  }
+
+  const game = normalizeDragonState(session.content);
+  const phase = getDragonPhase(game);
+  const participant = getDragonParticipant(game, state.currentUser.id);
+  const joined = Boolean(participant);
+  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
+  const multiplier = phase === "playing" ? getDragonLiveMultiplier(game) : roundMultiplier(game.finalMultiplier || 1);
+  const collectible = participant?.status === "cashed_out"
+    ? participant.cashoutValue
+    : phase === "playing" && participant?.status === "joined"
+      ? roundCoinValue(game.baseStake * multiplier)
+      : 0;
+  const action = !session
+    ? `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="start">Baslat</button>`
+    : phase === "lobby"
+      ? `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="${joined ? "noop" : "join"}" ${joined ? "disabled" : ""}>${joined ? "Katildin" : "Katil"}</button>`
+      : phase === "playing"
+        ? `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="cashout" ${!joined || participant?.status !== "joined" ? "disabled" : ""}>Cek</button>`
+        : `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="start">Yeni Tur</button>`;
+
+  return `
+    <section class="dragon-screen">
+      <div class="dragon-screen-inner">
+        <div class="dragon-modal-header">
+          <div>
+            <div class="dragon-modal-title">Ejderha</div>
+            <div class="dragon-modal-subtitle">${escapeHtml(phase === "lobby" ? `Baslangica ${secondsLeft}s var` : (game.resultSummary || "Ejderha oyunda"))}</div>
+          </div>
+          <div class="dragon-modal-multiplier" data-dragon-live-multiplier>${escapeHtml(formatMultiplier(multiplier))}</div>
+        </div>
+        <div class="dragon-modal-scene ${phase === "playing" ? "is-live" : ""} ${game.status === "crashed" ? "is-crashed" : ""}">
+          <div class="dragon-modal-dragon">${game.status === "crashed" ? "💥" : "🐉"}</div>
+          <div class="dragon-modal-fire" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        </div>
+        <div class="dragon-modal-stats">
+          <div class="dragon-stat">
+            <span class="dragon-label">Deger</span>
+            <strong>${escapeHtml(formatCoinValue(game.baseStake))}</strong>
+          </div>
+          <div class="dragon-stat">
+            <span class="dragon-label">${phase === "lobby" ? "Sen" : "Cekilebilir"}</span>
+            <strong data-dragon-live-collectible>${escapeHtml(formatCoinValue(collectible))}</strong>
+          </div>
+          <div class="dragon-stat">
+            <span class="dragon-label">Oyuncu</span>
+            <strong>${escapeHtml(String((game.participants || []).length))}</strong>
+          </div>
+        </div>
+        <div class="dragon-modal-actions">${action}</div>
+        <div class="dragon-participants is-modal">
+          ${(game.participants || []).map((entry) => renderDragonParticipant(entry)).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderDragonModal() {
   const message = state.dragonModalMessageId ? findMessageById(state.dragonModalMessageId) : null;
   if (!message || message.type !== "dragon") return "";
@@ -1755,6 +1867,89 @@ async function performDragonAction(messageId, actionType) {
     replaceLocalMessage(payload.message);
   }
   return payload?.message || null;
+}
+
+async function handleDragonHubAction(action) {
+  if (state.isMessagesLoading || state.interactiveActionLocks[DRAGON_CHANNEL_ID]) return;
+  state.interactiveActionLocks[DRAGON_CHANNEL_ID] = true;
+  try {
+    const response = await fetch("/api/dragon", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scopeKey: state.scopeKey,
+        action,
+        actor: {
+          id: state.currentUser.id,
+          name: state.currentUser.displayName
+        }
+      })
+    });
+    if (!response.ok) {
+      throw new Error("Dragon action failed.");
+    }
+    const payload = await response.json();
+    state.dragonSession = payload.session || null;
+    render();
+  } catch (error) {
+    console.warn("Dragon hub action failed.", error);
+  } finally {
+    delete state.interactiveActionLocks[DRAGON_CHANNEL_ID];
+  }
+}
+
+async function loadDragonSession({ initial = false } = {}) {
+  if (initial) {
+    state.dragonStateLoading = true;
+    if (isCasinoDragonView()) render();
+  }
+
+  try {
+    const response = await fetch(`/api/dragon?scopeKey=${encodeURIComponent(state.scopeKey)}&ts=${Date.now()}`, {
+      cache: "no-store"
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    state.dragonSession = payload.session || null;
+  } catch (error) {
+    console.warn("Dragon session load failed.", error);
+  } finally {
+    state.dragonStateLoading = false;
+    if (isCasinoDragonView()) render();
+  }
+}
+
+async function initializeDragonTransport() {
+  await loadDragonSession({ initial: true });
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    if (!state.dragonRealtimeClient) {
+      state.dragonRealtimeClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }
+    if (state.dragonRealtimeChannel) {
+      state.dragonRealtimeClient.removeChannel(state.dragonRealtimeChannel);
+      state.dragonRealtimeChannel = null;
+    }
+    state.dragonRealtimeChannel = state.dragonRealtimeClient
+      .channel(`dragon-${state.scopeKey}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => {
+        const row = payload?.new || payload?.old;
+        if (!isDragonRealtimeRow(row)) return;
+        void loadDragonSession();
+      })
+      .subscribe();
+  } catch (error) {
+    console.warn("Dragon realtime subscription failed, falling back to refresh.", error);
+  }
+}
+
+function isDragonRealtimeRow(row) {
+  return row
+    && row.scope_key === state.scopeKey
+    && row.channel_id === DRAGON_CHANNEL_ID
+    && row.message_type === "dragon_state";
 }
 
 async function persistInteractiveGameUpdate(message, nextContent) {
@@ -2680,7 +2875,7 @@ function stopDragonTicker() {
 }
 
 function syncDragonModalLoop() {
-  if (!state.dragonModalMessageId) {
+  if (!state.dragonModalMessageId && !(isCasinoDragonView() && state.dragonSession)) {
     stopDragonModalLoop();
     return;
   }
@@ -2689,11 +2884,11 @@ function syncDragonModalLoop() {
 
   const tick = () => {
     state.dragonModalRaf = 0;
-    if (!state.dragonModalMessageId) return;
-
-    const message = findMessageById(state.dragonModalMessageId);
-    if (!message || message.type !== "dragon") {
-      closeDragonModal();
+    const message = state.dragonModalMessageId
+      ? findMessageById(state.dragonModalMessageId)
+      : state.dragonSession;
+    if (!message || message.type !== "dragon_state" && message.type !== "dragon") {
+      if (state.dragonModalMessageId) closeDragonModal();
       return;
     }
 
