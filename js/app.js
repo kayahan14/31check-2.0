@@ -3317,6 +3317,11 @@ function mergeDragonSessionWithLocal(currentSession, incomingSession) {
   const currentRevision = Number(currentGame.revision || 0);
   const incomingRevision = Number(incomingGame.revision || 0);
 
+  // A server-side crash is authoritative and must override optimistic cashout state.
+  if (incomingGame.status === "crashed") {
+    return incomingSession;
+  }
+
   if (currentRevision > incomingRevision) {
     return currentSession;
   }

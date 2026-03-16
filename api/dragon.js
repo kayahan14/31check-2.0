@@ -236,6 +236,28 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     };
   }
 
+  if (action === "resolve") {
+    if (getDragonPhase(game, now) === "finished" && game.status !== "crashed") {
+      game.status = "crashed";
+      game.finalMultiplier = roundMultiplier(game.crashAtMultiplier);
+      game.resultSummary = "EJDERHA PATLADI 💥";
+      game.participants = game.participants.map((entry) => entry.status === "joined" ? { ...entry, status: "crashed" } : entry);
+      game.revision += 1;
+      const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
+      return {
+        session,
+        config: currentConfig,
+        serverNowMs: now
+      };
+    }
+
+    return {
+      session: { ...current, content: game },
+      config: currentConfig,
+      serverNowMs: now
+    };
+  }
+
   return {
     session: { ...current, content: game },
     config: currentConfig,
