@@ -111,6 +111,7 @@ const state = {
   dragonRealtimeReady: false,
   dragonConfig: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
+  dragonRecentResults: [],
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
@@ -1958,6 +1959,7 @@ function renderDragonParticipant(entry) {
 
 function renderDragonRealtimeView() {
   const session = state.dragonSession;
+  const recentResults = Array.isArray(state.dragonRecentResults) ? state.dragonRecentResults : [];
   if (state.dragonStateLoading) {
     return `<section class="dragon-screen"><div class="chat-loading"><div class="chat-loading-spinner"></div><div class="chat-loading-text">Ejderha yukleniyor...</div></div></section>`;
   }
@@ -2001,10 +2003,14 @@ function renderDragonRealtimeView() {
         <div class="dragon-modal-header">
           <div>
             <div class="dragon-modal-title">Ejderha</div>
-            <div class="dragon-modal-subtitle" data-dragon-live-subtitle>${escapeHtml(phase === "lobby" ? `Baslangica ${secondsLeft}s var` : (game.resultSummary || "Ejderha oyunda"))}</div>
+            <div class="dragon-modal-subtitle">Son 50 sonuc</div>
           </div>
         </div>
+        <div class="dragon-history-strip" aria-label="Son 50 ejderha sonucu">
+          ${recentResults.length ? recentResults.map((entry) => renderDragonHistoryPill(entry)).join("") : '<span class="dragon-history-empty">Henuz tamamlanan tur yok.</span>'}
+        </div>
         <div class="dragon-modal-scene dragon-hub-scene ${phase === "playing" ? "is-live" : ""} ${game.status === "crashed" ? "is-crashed" : ""}">
+          <div class="dragon-scene-badge" data-dragon-live-subtitle>${escapeHtml(phase === "lobby" ? `Baslangica ${secondsLeft}s var` : (game.resultSummary || "Ejderha oyunda"))}</div>
           <div class="dragon-modal-dragon dragon-hub-dragon">${game.status === "crashed" ? "💥" : "🐉"}</div>
           <div class="dragon-modal-fire" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
           <div class="dragon-flame-meter">
@@ -3388,6 +3394,9 @@ function applyDragonTransportPayload(payload, options = {}) {
   if (payload?.config) {
     syncDragonConfigFromServer(payload.config, { overwriteDraft });
   }
+  if (Array.isArray(payload?.recentResults)) {
+    state.dragonRecentResults = payload.recentResults.map((entry) => normalizeDragonHistoryEntry(entry));
+  }
 
   const nextSessionKey = getDragonSessionRenderKey(state.dragonSession);
   const nextConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
@@ -3426,6 +3435,7 @@ async function broadcastDragonTransportPayload(payload) {
       payload: {
         session: payload?.session || null,
         config: payload?.config || state.dragonConfig,
+        recentResults: Array.isArray(payload?.recentResults) ? payload.recentResults : state.dragonRecentResults,
         serverNowMs: payload?.serverNowMs || getDragonNow()
       }
     });
@@ -3600,6 +3610,30 @@ function getDragonCrashChance(config, multiplier, boosted = false) {
 
 function roundMultiplier(value) {
   return Math.round(Number(value || 1) * 100) / 100;
+}
+
+function normalizeDragonHistoryEntry(entry) {
+  return {
+    sessionId: String(entry?.sessionId || ""),
+    multiplier: roundMultiplier(entry?.multiplier),
+    crashed: Boolean(entry?.crashed),
+    createdAtMs: Number(entry?.createdAtMs) || 0
+  };
+}
+
+function renderDragonHistoryPill(entry) {
+  const item = normalizeDragonHistoryEntry(entry);
+  return `<span class="dragon-history-pill ${dragonHistoryBandClass(item.multiplier)}">${escapeHtml(formatMultiplier(item.multiplier))}</span>`;
+}
+
+function dragonHistoryBandClass(multiplier) {
+  const value = Number(multiplier) || 1;
+  if (value < 1.1) return "is-band-red";
+  if (value < 1.5) return "is-band-amber";
+  if (value < 2) return "is-band-yellow";
+  if (value < 3) return "is-band-green";
+  if (value < 10) return "is-band-cyan";
+  return "is-band-violet";
 }
 
 function startDragonTicker() {

@@ -42,7 +42,8 @@ export default async function handler(req, res) {
       const serverNowMs = Date.now();
       const session = await getCurrentDragonSession(scopeKey);
       const config = await getDragonConfig(scopeKey);
-      res.status(200).json({ ok: true, session, config, serverNowMs });
+      const recentResults = await getDragonRecentResults(scopeKey, serverNowMs);
+      res.status(200).json({ ok: true, session, config, recentResults, serverNowMs });
       return;
     }
 
@@ -69,6 +70,7 @@ export default async function handler(req, res) {
         ok: true,
         session: result.session,
         config: result.config,
+        recentResults: result.recentResults,
         serverNowMs: result.serverNowMs
       });
       return;
@@ -111,6 +113,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     return {
       session: current,
       config: nextConfig,
+      recentResults: await getDragonRecentResults(scopeKey, now),
       serverNowMs: now
     };
   }
@@ -120,6 +123,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session: current,
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -129,6 +133,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     return {
       session,
       config: currentConfig,
+      recentResults: await getDragonRecentResults(scopeKey, now),
       serverNowMs: now
     };
   }
@@ -143,6 +148,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session,
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -150,6 +156,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     return {
       session: current,
       config: currentConfig,
+      recentResults: await getDragonRecentResults(scopeKey, now),
       serverNowMs: now
     };
   }
@@ -159,6 +166,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session: { ...current, content: game },
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -170,6 +178,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session,
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -177,6 +186,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     return {
       session: { ...current, content: game },
       config: currentConfig,
+      recentResults: await getDragonRecentResults(scopeKey, now),
       serverNowMs: now
     };
   }
@@ -186,6 +196,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session: { ...current, content: game },
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -195,6 +206,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session: { ...current, content: game },
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -209,6 +221,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session,
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -232,6 +245,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     return {
       session,
       config: currentConfig,
+      recentResults: await getDragonRecentResults(scopeKey, now),
       serverNowMs: now
     };
   }
@@ -247,6 +261,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       return {
         session,
         config: currentConfig,
+        recentResults: await getDragonRecentResults(scopeKey, now),
         serverNowMs: now
       };
     }
@@ -254,6 +269,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     return {
       session: { ...current, content: game },
       config: currentConfig,
+      recentResults: await getDragonRecentResults(scopeKey, now),
       serverNowMs: now
     };
   }
@@ -261,6 +277,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
   return {
     session: { ...current, content: game },
     config: currentConfig,
+    recentResults: await getDragonRecentResults(scopeKey, now),
     serverNowMs: now
   };
 }
@@ -292,6 +309,30 @@ async function getDragonConfig(scopeKey) {
 
   const latest = [...configs].sort((left, right) => Number(right.serverCreatedAtMs || 0) - Number(left.serverCreatedAtMs || 0))[0];
   return normalizeDragonConfig(latest.content);
+}
+
+async function getDragonRecentResults(scopeKey, now = Date.now()) {
+  const channels = await listScopeChannels(scopeKey);
+  const sessions = Object.values(channels || {})
+    .flat()
+    .filter((message) => message?.channelId === DRAGON_CHANNEL_ID && message?.type === DRAGON_TYPE)
+    .map((message) => ({
+      ...message,
+      content: normalizeDragonState(message.content, now)
+    }))
+    .filter((message) => getDragonPhase(message.content, now) === "finished")
+    .sort((left, right) => Number(right.serverCreatedAtMs || 0) - Number(left.serverCreatedAtMs || 0))
+    .slice(0, 50);
+
+  return sessions.map((message) => {
+    const game = message.content;
+    return {
+      sessionId: message.id,
+      multiplier: roundMultiplier(game.crashAtMultiplier || game.finalMultiplier || 1),
+      crashed: game.status === "crashed",
+      createdAtMs: Number(message.serverCreatedAtMs || message.createdAtMs || now)
+    };
+  });
 }
 
 async function saveDragonConfig(scopeKey, config, actor, now) {

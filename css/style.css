@@ -948,6 +948,54 @@ svg { display: block; }
   color: var(--text-muted);
   font-size: 13px;
 }
+.dragon-history-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dragon-history-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.dragon-history-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+.dragon-history-pill.is-band-red {
+  background: rgba(240, 71, 71, 0.22);
+  color: #ff9f9f;
+}
+.dragon-history-pill.is-band-amber {
+  background: rgba(255, 159, 67, 0.2);
+  color: #ffc07a;
+}
+.dragon-history-pill.is-band-yellow {
+  background: rgba(250, 214, 92, 0.18);
+  color: #ffe58b;
+}
+.dragon-history-pill.is-band-green {
+  background: rgba(67, 181, 129, 0.2);
+  color: #9ff0c1;
+}
+.dragon-history-pill.is-band-cyan {
+  background: rgba(72, 187, 255, 0.18);
+  color: #92dcff;
+}
+.dragon-history-pill.is-band-violet {
+  background: rgba(170, 125, 255, 0.2);
+  color: #d2b7ff;
+}
 .dragon-modal-multiplier {
   min-width: 108px;
   padding: 12px 14px;
@@ -1108,6 +1156,23 @@ svg { display: block; }
   justify-content: center;
   z-index: 3;
   pointer-events: none;
+}
+.dragon-scene-badge {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(30, 16, 46, 0.72);
+  border: 1px solid rgba(198, 159, 255, 0.24);
+  color: #f0dcff;
+  font-size: 12px;
+  font-weight: 800;
+  backdrop-filter: blur(6px);
 }
 .dragon-flame-core {
   position: absolute;
@@ -1764,6 +1829,14 @@ svg { display: block; }
   }
   .dragon-hub-scene {
     min-height: 280px;
+  }
+  .dragon-history-strip {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 10px;
+  }
+  .dragon-history-pill {
+    flex: 0 0 auto;
   }
   .dragon-modal-stats {
     grid-template-columns: 1fr;
