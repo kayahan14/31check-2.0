@@ -58,6 +58,8 @@ const state = {
   runtimeNote: MOCK_MODE ? "Tarayıcı önizleme modu" : "Discord Activity başlatılıyor...",
   scopeKey: "local-preview",
   messageSyncHandle: null,
+  isMessagesLoading: true,
+  membersLoading: !MOCK_MODE,
   composerDraft: "",
   searchQuery: "",
   sidebarCollapsed: false,
@@ -83,7 +85,7 @@ const state = {
   channels: [...DEFAULT_CHANNELS],
   selectedChannelId: initialChannelId(),
   messagesByChannel: buildEmptyMessageState(),
-  members: [...DEFAULT_MEMBERS],
+  members: MOCK_MODE ? [...DEFAULT_MEMBERS] : [],
   activeAdminTab: "channels",
   editingActionId: null,
   tempAction: { label: "", message: "" }
@@ -149,7 +151,8 @@ function bindStaticEvents() {
 async function initializeRuntime() {
   if (MOCK_MODE) {
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
-    await loadPersistedMessages();
+    await loadPersistedMessages({ initial: true });
+    state.membersLoading = false;
     startMessageSync();
     render();
     return;
@@ -169,7 +172,7 @@ async function initializeRuntime() {
     await subscribeDiscordEvents(auth);
     await hydrateGuildMember(auth);
     await hydrateParticipants();
-    await loadPersistedMessages();
+    await loadPersistedMessages({ initial: true });
     startMessageSync();
     render();
     renderUserModal();
@@ -179,7 +182,9 @@ async function initializeRuntime() {
     state.runtimeNote = `Discord bağlanamadı: ${String(error?.message || "önizleme modu")}`;
     state.scopeKey = "local-preview";
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
-    await loadPersistedMessages();
+    state.members = [...DEFAULT_MEMBERS];
+    state.membersLoading = false;
+    await loadPersistedMessages({ initial: true });
     startMessageSync();
     render();
   }
@@ -298,6 +303,8 @@ async function hydrateParticipants() {
     const result = await state.discordSdk.commands.getInstanceConnectedParticipants();
     syncParticipants(result?.participants || []);
   } catch (error) {
+    state.membersLoading = false;
+    state.members = [currentUserAsMember()];
     console.warn("Could not fetch connected Discord participants.", error);
   }
 }
@@ -306,17 +313,30 @@ function syncParticipants(participants) {
   if (!Array.isArray(participants)) return;
 
   const mapped = participants.map((participant, index) => mapDiscordParticipant(participant, index));
+  state.membersLoading = false;
   state.members = mapped.length ? dedupeMembers(mapped) : [currentUserAsMember()];
 }
 
-async function loadPersistedMessages() {
-  const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}&ts=${Date.now()}`, {
-    cache: "no-store"
-  });
-  if (!response.ok) return;
+async function loadPersistedMessages({ initial = false } = {}) {
+  if (initial) {
+    state.isMessagesLoading = true;
+    render();
+  }
 
-  const payload = await response.json();
-  syncRemoteMessages(payload.channels || {});
+  try {
+    const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}&ts=${Date.now()}`, {
+      cache: "no-store"
+    });
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    syncRemoteMessages(payload.channels || {});
+  } finally {
+    if (state.isMessagesLoading) {
+      state.isMessagesLoading = false;
+      render();
+    }
+  }
 }
 
 function startMessageSync() {
@@ -399,6 +419,7 @@ function syncRemoteMessages(channels) {
 
 function render() {
   const previousMessagesPane = document.querySelector(".messages");
+  const previousScrollTop = previousMessagesPane?.scrollTop || 0;
   if (previousMessagesPane) {
     state.messagePanePinnedToBottom = isNearBottom(previousMessagesPane);
   }
@@ -409,6 +430,7 @@ function render() {
   const channel = selectedChannel();
   const rawMessages = state.messagesByChannel[channel?.id] || [];
   const messages = filterMessages(rawMessages, state.searchQuery);
+  const composerDisabled = state.isMessagesLoading;
 
   app.className = `app ${state.sidebarCollapsed ? "sidebar-collapsed" : ""}`.trim();
   app.innerHTML = `
@@ -450,13 +472,14 @@ function render() {
             </div>
           </header>
           <div class="messages">
-            ${messages.length ? renderMessages(messages) : renderEmptyMessageState(channel)}
+            ${state.isMessagesLoading ? renderChatLoadingState() : messages.length ? renderMessages(messages) : renderEmptyMessageState(channel)}
           </div>
+          ${renderScrollToBottomButton()}
           <div class="composer-wrap">
             <div class="quick-actions">${renderGameButtons()}</div>
             <form class="composer" id="composerForm">
-              <input id="composerInput" type="text" value="${escapeAttr(state.composerDraft)}" placeholder="${escapeAttr((channel?.name || "") + " kanalına mesaj gönder")}" autocomplete="off">
-              <button type="submit" class="btn btn-primary composer-send">Gönder</button>
+              <input id="composerInput" type="text" value="${escapeAttr(state.composerDraft)}" placeholder="${escapeAttr(state.isMessagesLoading ? "Chat yükleniyor..." : (channel?.name || "") + " kanalına mesaj gönder")}" autocomplete="off" ${composerDisabled ? "disabled" : ""}>
+              <button type="submit" class="btn btn-primary composer-send" ${composerDisabled ? "disabled" : ""}>Gönder</button>
             </form>
           </div>
         </section>
@@ -475,8 +498,11 @@ function render() {
   if (shouldRestoreSearchFocus) {
     focusSearch();
   }
+  const nextMessagesPane = document.querySelector(".messages");
   if (shouldStickToBottom) {
-    scrollMessagesToBottom();
+    scrollMessagesToBottom(nextMessagesPane);
+  } else if (nextMessagesPane) {
+    nextMessagesPane.scrollTop = previousScrollTop;
   }
   state.forceScrollToBottom = false;
 }
@@ -533,6 +559,9 @@ function renderMessages(messages) {
 
 function renderMembers() {
   if (state.runtimeMode === "discord") {
+    if (state.membersLoading) {
+      return `<section class="member-group"><div class="member-group-title">Aktif Activity Oyuncuları</div><div class="member-empty">Oyuncular yükleniyor...</div></section>`;
+    }
     return `<section class="member-group">
         <div class="member-group-title">Aktif Activity Oyuncuları - ${state.members.length}</div>
         ${state.members.length ? state.members.map(renderMemberRow).join("") : '<div class="member-empty">Bu activityde henüz aktif kimse yok.</div>'}
@@ -552,7 +581,7 @@ function renderMembers() {
 }
 
 function renderGameButtons() {
-  return GAME_BUTTONS.map((button) => `<button type="button" data-game-id="${button.game}">${escapeHtml(button.label)}</button>`).join("");
+  return GAME_BUTTONS.map((button) => `<button type="button" data-game-id="${button.game}" ${state.isMessagesLoading ? "disabled" : ""}>${escapeHtml(button.label)}</button>`).join("");
 }
 
 function renderMemberRow(member) {
@@ -610,9 +639,25 @@ function bindRuntimeUi() {
   const input = document.getElementById("composerInput");
   const searchInput = document.getElementById("messageSearchInput");
   const messagesPane = document.querySelector(".messages");
+  const scrollButton = document.getElementById("scrollToBottomButton");
   if (messagesPane) {
     messagesPane.addEventListener("scroll", () => {
       state.messagePanePinnedToBottom = isNearBottom(messagesPane);
+      const button = document.getElementById("scrollToBottomButton");
+      if (button) {
+        button.classList.toggle("visible", !state.messagePanePinnedToBottom);
+      }
+    });
+  }
+  if (scrollButton) {
+    scrollButton.addEventListener("click", () => {
+      state.forceScrollToBottom = true;
+      state.messagePanePinnedToBottom = true;
+      scrollMessagesToBottom(messagesPane);
+      const button = document.getElementById("scrollToBottomButton");
+      if (button) {
+        button.classList.remove("visible");
+      }
     });
   }
   if (searchInput) {
@@ -994,8 +1039,7 @@ function focusSearch() {
   }
 }
 
-function scrollMessagesToBottom() {
-  const pane = document.querySelector(".messages");
+function scrollMessagesToBottom(pane = document.querySelector(".messages")) {
   if (!pane) return;
   pane.scrollTop = pane.scrollHeight;
 }
@@ -1014,6 +1058,15 @@ function focusMessage(messageId) {
 function renderToast() {
   if (!state.toastMessage) return "";
   return `<div class="toast" role="status" aria-live="polite">${escapeHtml(state.toastMessage)}</div>`;
+}
+
+function renderChatLoadingState() {
+  return `<div class="chat-loading"><div class="chat-loading-spinner"></div><div class="chat-loading-text">Chat yükleniyor...</div></div>`;
+}
+
+function renderScrollToBottomButton() {
+  const hidden = state.messagePanePinnedToBottom || state.isMessagesLoading;
+  return `<button type="button" id="scrollToBottomButton" class="scroll-to-bottom ${hidden ? "" : "visible"}" aria-label="En alta git">${icon("chevron-down", 18)}</button>`;
 }
 
 function showToast(message) {
