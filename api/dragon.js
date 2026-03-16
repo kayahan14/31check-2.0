@@ -5,10 +5,12 @@ const DRAGON_TYPE = "dragon_state";
 const DRAGON_CONFIG_TYPE = "dragon_config";
 const BASE_STAKE = 100;
 const LOBBY_MS = 10000;
-const DRAGON_STAGE_TWO_MULTIPLIER = 2;
-const DRAGON_STAGE_THREE_MULTIPLIER = 3;
-const DRAGON_STAGE_TWO_SPEED = 0.75;
-const DRAGON_STAGE_THREE_SPEED = 1.25;
+const DRAGON_SPEED_STAGES = [
+  { multiplier: 2, speed: 0.6 },
+  { multiplier: 3, speed: 1 },
+  { multiplier: 4, speed: 1.25 },
+  { multiplier: 5, speed: 1.5 }
+];
 const DRAGON_ALL_CASHED_OUT_SPEED = 5;
 const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: LOBBY_MS,
@@ -374,23 +376,36 @@ function getDragonEffectiveElapsedForMultiplier(targetMultiplier) {
 }
 
 function getDragonBaseEffectiveElapsed(game, elapsedSeconds) {
-  const stageOneSpeed = Math.max(0.1, Number(game?.config?.speedFactor || DEFAULT_DRAGON_CONFIG.speedFactor));
-  const stageTwoSpeed = Math.max(stageOneSpeed, DRAGON_STAGE_TWO_SPEED);
-  const stageThreeSpeed = Math.max(stageTwoSpeed, DRAGON_STAGE_THREE_SPEED);
-  const stageTwoEffective = getDragonEffectiveElapsedForMultiplier(DRAGON_STAGE_TWO_MULTIPLIER);
-  const stageThreeEffective = getDragonEffectiveElapsedForMultiplier(DRAGON_STAGE_THREE_MULTIPLIER);
-  const stageOneSeconds = stageTwoEffective / stageOneSpeed;
-  const stageTwoSeconds = stageOneSeconds + ((stageThreeEffective - stageTwoEffective) / stageTwoSpeed);
+  const baseSpeed = Math.max(0.1, Number(game?.config?.speedFactor || DEFAULT_DRAGON_CONFIG.speedFactor));
+  const stages = [{ multiplier: 1, speed: baseSpeed }]
+    .concat(DRAGON_SPEED_STAGES.map((stage) => ({
+      multiplier: stage.multiplier,
+      speed: Math.max(baseSpeed, stage.speed)
+    })));
 
-  if (elapsedSeconds <= stageOneSeconds) {
-    return elapsedSeconds * stageOneSpeed;
+  let consumedSeconds = 0;
+  let carriedEffective = 0;
+
+  for (let index = 0; index < stages.length; index += 1) {
+    const currentStage = stages[index];
+    const nextStage = stages[index + 1];
+    if (!nextStage) {
+      return carriedEffective + ((elapsedSeconds - consumedSeconds) * currentStage.speed);
+    }
+
+    const currentEffective = getDragonEffectiveElapsedForMultiplier(currentStage.multiplier);
+    const nextEffective = getDragonEffectiveElapsedForMultiplier(nextStage.multiplier);
+    const stageDurationSeconds = (nextEffective - currentEffective) / currentStage.speed;
+
+    if (elapsedSeconds <= consumedSeconds + stageDurationSeconds) {
+      return carriedEffective + ((elapsedSeconds - consumedSeconds) * currentStage.speed);
+    }
+
+    consumedSeconds += stageDurationSeconds;
+    carriedEffective = nextEffective;
   }
 
-  if (elapsedSeconds <= stageTwoSeconds) {
-    return stageTwoEffective + ((elapsedSeconds - stageOneSeconds) * stageTwoSpeed);
-  }
-
-  return stageThreeEffective + ((elapsedSeconds - stageTwoSeconds) * stageThreeSpeed);
+  return carriedEffective;
 }
 
 function getDragonEffectiveElapsed(game, now = Date.now()) {
