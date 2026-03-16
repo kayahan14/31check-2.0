@@ -354,7 +354,7 @@ function getDragonPhase(gameState, now = Date.now()) {
 function getDragonLiveMultiplier(gameState, now = Date.now()) {
   const game = typeof gameState?.game === "string" ? gameState : normalizeDragonState(gameState, now);
   if (game.status === "crashed") {
-    return roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
+    return roundMultiplier(game.crashAtMultiplier || game.finalMultiplier || 1);
   }
   if (now < game.launchAtMs) {
     return 1;

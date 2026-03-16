@@ -509,8 +509,9 @@ svg { display: block; }
   position: absolute;
   top: 4px;
   left: 5px;
-  font-size: 9px;
+  font-size: 27px;
   font-weight: 700;
+  line-height: 0.9;
 }
 .playing-card-center {
   position: absolute;
@@ -1062,7 +1063,7 @@ svg { display: block; }
   right: auto;
   font-size: 110px;
   z-index: 2;
-  transform: translateY(-50%);
+  transform: translateY(-50%) scaleX(-1);
   animation: dragonFloat 3.2s ease-in-out infinite;
 }
 .dragon-hub-scene.is-crashed .dragon-hub-dragon {
@@ -1700,9 +1701,12 @@ svg { display: block; }
 }
 @keyframes dragonFloat {
   0%, 100% {
-    transform: translateY(-50%) translateY(0);
+    transform: translateY(calc(-50% + 0px)) scaleX(-1);
   }
   50% {
-    transform: translateY(-50%) translateY(-8px);
+    transform: translateY(calc(-50% + 10px)) scaleX(-1);
+  }
+  75% {
+    transform: translateY(calc(-50% + 4px)) scaleX(-1);
   }
 }

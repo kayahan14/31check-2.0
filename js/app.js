@@ -818,15 +818,18 @@ function bindRuntimeUi() {
       await handleDragonHubAction(action);
     });
   });
-  app.querySelectorAll("[data-dragon-auto-step]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const delta = Number(button.dataset.dragonAutoStep);
-      if (!Number.isFinite(delta)) return;
-      state.dragonAutoCashoutTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget + delta);
+  const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
+  if (dragonAutoInput) {
+    const syncDragonAutoInput = () => {
+      const parsed = parseDragonAutoCashoutInput(dragonAutoInput.value);
+      state.dragonAutoCashoutTarget = parsed;
+      dragonAutoInput.value = formatDecimalInput(parsed);
       saveDragonAutoCashoutPreference();
       render();
-    });
-  });
+    };
+    dragonAutoInput.addEventListener("change", syncDragonAutoInput);
+    dragonAutoInput.addEventListener("blur", syncDragonAutoInput);
+  }
   const dragonAutoToggle = document.getElementById("dragonAutoCashoutToggle");
   if (dragonAutoToggle) {
     dragonAutoToggle.addEventListener("click", () => {
@@ -1603,7 +1606,7 @@ function renderPlayingCard(messageId, card) {
 }
 
 function renderBlackjackActionButton(messageId, action, enabled, ownerCanPlay) {
-  const disabled = state.isMessagesLoading || !enabled || !ownerCanPlay || Boolean(state.interactiveActionLocks[messageId]);
+  const disabled = !enabled || !ownerCanPlay || Boolean(state.interactiveActionLocks[messageId]);
   const labels = {
     hit: "Hit",
     stand: "Stand",
@@ -1651,7 +1654,7 @@ function findActiveBlackjackMessageForCurrentUser() {
 function renderMinesMessage(message) {
   const game = normalizeMinesState(message.content);
   const ownerCanPlay = game.ownerId === state.currentUser.id;
-  const disabled = state.isMessagesLoading || game.status !== "playing" || !ownerCanPlay;
+  const disabled = game.status !== "playing" || !ownerCanPlay;
   const tone = getMinesResultTone(game.status);
   const title = renderMinesTitle(game);
   const stats = getMinesStats(game);
@@ -1775,7 +1778,7 @@ function renderDragonRealtimeView() {
     : phase === "lobby"
       ? `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="${joined ? "noop" : "join"}" ${joined ? "disabled" : ""}>${joined ? "Katildin" : "Katil"}</button>`
       : phase === "playing"
-        ? `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="cashout" ${!joined || participant?.status !== "joined" ? "disabled" : ""}>Cek</button>`
+        ? `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="cashout" ${!joined || participant?.status !== "joined" ? "disabled" : ""}>${participant?.status === "cashed_out" ? formatMultiplier(participant.cashoutMultiplier) : "Cek"}</button>`
         : `<button type="button" class="btn dragon-modal-action" data-dragon-hub-action="start">Yeni Tur</button>`;
 
   return `
@@ -1816,9 +1819,7 @@ function renderDragonRealtimeView() {
             <strong>${escapeHtml(formatMultiplier(autoTarget))}</strong>
           </div>
           <div class="dragon-auto-controls">
-            <button type="button" class="btn dragon-auto-step" data-dragon-auto-step="-0.25">-</button>
-            <div class="dragon-auto-display">${escapeHtml(formatMultiplier(autoTarget))}</div>
-            <button type="button" class="btn dragon-auto-step" data-dragon-auto-step="0.25">+</button>
+            <input id="dragonAutoCashoutInput" class="dragon-auto-input" type="text" inputmode="decimal" value="${escapeAttr(formatDecimalInput(autoTarget))}" placeholder="2.00">
             <button type="button" class="btn dragon-auto-toggle ${state.dragonAutoCashoutEnabled ? "is-active" : ""}" id="dragonAutoCashoutToggle">${state.dragonAutoCashoutEnabled ? "Acik" : "Kapali"}</button>
           </div>
         </div>
@@ -1912,7 +1913,6 @@ function renderMinesCell(messageId, cell, index, disabled) {
 async function handleMinesReveal(messageId, cellIndex) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
-  if (state.isMessagesLoading) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing") return;
@@ -1926,7 +1926,6 @@ async function handleMinesReveal(messageId, cellIndex) {
 async function handleMinesCollect(messageId) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
-  if (state.isMessagesLoading) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing" || game.revealedSafeCount === 0) return;
@@ -1938,7 +1937,7 @@ async function handleMinesCollect(messageId) {
 async function handleDragonCollect(messageId) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "dragon") return;
-  if (state.isMessagesLoading || state.interactiveActionLocks[messageId]) return;
+  if (state.interactiveActionLocks[messageId]) return;
 
   const game = normalizeDragonState(message.content);
   if (getDragonPhase(game) !== "playing") return;
@@ -1954,7 +1953,7 @@ async function handleDragonCollect(messageId) {
 async function handleDragonJoin(messageId) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "dragon") return;
-  if (state.isMessagesLoading || state.interactiveActionLocks[messageId]) return;
+  if (state.interactiveActionLocks[messageId]) return;
 
   state.interactiveActionLocks[messageId] = true;
   try {
@@ -2044,7 +2043,7 @@ async function loadDragonSession({ initial = false } = {}) {
     });
     if (!response.ok) return;
     const payload = await response.json();
-    state.dragonSession = payload.session || null;
+    state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload.session || null);
     syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
   } catch (error) {
     console.warn("Dragon session load failed.", error);
@@ -2992,6 +2991,15 @@ function normalizeDragonAutoCashoutTarget(value) {
   return Math.min(25, Math.max(1.01, Math.round(numeric * 100) / 100));
 }
 
+function parseDragonAutoCashoutInput(value) {
+  const normalized = String(value || "").trim().replace(",", ".");
+  return normalizeDragonAutoCashoutTarget(normalized);
+}
+
+function formatDecimalInput(value) {
+  return normalizeDragonAutoCashoutTarget(value).toFixed(2);
+}
+
 function normalizeDragonConfig(config) {
   const next = config || {};
   return {
@@ -3013,6 +3021,33 @@ function syncDragonConfigFromServer(config, { overwriteDraft = true } = {}) {
   if (previousConfig !== nextConfig && userBackdrop.classList.contains("open")) {
     renderUserModal();
   }
+}
+
+function mergeDragonSessionWithLocal(currentSession, incomingSession) {
+  if (!currentSession || !incomingSession || currentSession.id !== incomingSession.id) {
+    return incomingSession;
+  }
+
+  const currentGame = normalizeDragonState(currentSession.content);
+  const incomingGame = normalizeDragonState(incomingSession.content);
+  const currentRevision = Number(currentGame.revision || 0);
+  const incomingRevision = Number(incomingGame.revision || 0);
+
+  if (currentRevision > incomingRevision) {
+    return currentSession;
+  }
+
+  const currentParticipant = getDragonParticipant(currentGame, state.currentUser.id);
+  const incomingParticipant = getDragonParticipant(incomingGame, state.currentUser.id);
+  if (currentParticipant?.status === "cashed_out" && incomingParticipant?.status !== "cashed_out") {
+    return currentSession;
+  }
+
+  if (currentGame.status === "crashed" && incomingGame.status !== "crashed") {
+    return currentSession;
+  }
+
+  return incomingSession;
 }
 
 function getLocalClearTimestamp(scopeKey, channelId) {
@@ -3077,9 +3112,11 @@ function getDragonDisplayMultiplier(gameState, phase = getDragonPhase(gameState)
     return getDragonLiveMultiplier(game);
   }
   if (phase === "finished") {
-    return roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
+    return roundMultiplier(game.status === "crashed"
+      ? (game.crashAtMultiplier || game.finalMultiplier || 1)
+      : (game.finalMultiplier || game.crashAtMultiplier || 1));
   }
-  return roundMultiplier(game.finalMultiplier || 1);
+  return roundMultiplier(game.finalMultiplier > 1 ? game.finalMultiplier : 1);
 }
 
 function applyOptimisticDragonCashout(session, userId, multiplier) {
@@ -3092,6 +3129,7 @@ function applyOptimisticDragonCashout(session, userId, multiplier) {
   participant.cashoutMultiplier = roundMultiplier(multiplier || getDragonLiveMultiplier(game));
   participant.cashoutValue = roundCoinValue(game.baseStake * participant.cashoutMultiplier);
   game.revision += 1;
+  game.finalMultiplier = participant.cashoutMultiplier;
 
   return {
     ...session,
