@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import express from "express";
-import { appendMessage, listScopeChannels } from "./storage.js";
+import { appendMessage, listScopeChannels, updateMessage } from "./storage.js";
 
 dotenv.config();
 const app = express();
@@ -36,6 +36,23 @@ app.post("/api/messages", async (req, res) => {
   await appendMessage(scopeKey, channelId, message);
 
   res.status(201).json({ ok: true });
+});
+
+app.patch("/api/messages", async (req, res) => {
+  const {
+    scopeKey = "local-preview",
+    messageId,
+    message
+  } = req.body || {};
+
+  if (!messageId || !message || !message.id) {
+    res.status(400).json({ error: "messageId and message are required." });
+    return;
+  }
+
+  const storedMessage = await updateMessage(scopeKey, messageId, message);
+
+  res.status(200).json({ ok: true, message: storedMessage });
 });
 
 app.post("/api/token", async (req, res) => {

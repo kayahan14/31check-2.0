@@ -1,4 +1,4 @@
-import { appendMessage, listScopeChannels } from "../server/storage.js";
+import { appendMessage, listScopeChannels, updateMessage } from "../server/storage.js";
 
 export default async function handler(req, res) {
   try {
@@ -31,7 +31,21 @@ export default async function handler(req, res) {
       return;
     }
 
-    res.setHeader("Allow", "GET, POST");
+    if (req.method === "PATCH") {
+      const { scopeKey = "local-preview", messageId, message } = req.body || {};
+
+      if (!messageId || !message || !message.id) {
+        res.status(400).json({ error: "messageId and message are required." });
+        return;
+      }
+
+      const storedMessage = await updateMessage(scopeKey, messageId, message);
+
+      res.status(200).json({ ok: true, message: storedMessage });
+      return;
+    }
+
+    res.setHeader("Allow", "GET, POST, PATCH");
     res.status(405).json({ error: "Method not allowed." });
   } catch (error) {
     res.status(500).json({

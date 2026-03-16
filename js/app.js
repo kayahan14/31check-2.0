@@ -34,6 +34,15 @@ const GAME_BUTTONS = [
   { id: "case", label: "🎁 Kasa", game: "case" }
 ];
 
+const BLACKJACK_RULE_LABEL = "Kural seti: 6 deste, blackjack sadece ilk elde, dealer soft 17'de bekler, split aslarda tek kart ve blackjack sayilmaz.";
+const BLACKJACK_SUITS = [
+  { key: "spades", symbol: "♠", color: "black" },
+  { key: "hearts", symbol: "♥", color: "red" },
+  { key: "diamonds", symbol: "♦", color: "red" },
+  { key: "clubs", symbol: "♣", color: "black" }
+];
+const BLACKJACK_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+
 const FALLBACK_MESSAGE = {
   id: uid(),
   author: "31check",
@@ -56,6 +65,7 @@ const state = {
   messagePanePinnedToBottom: true,
   forceScrollToBottom: false,
   highlightedMessageId: "",
+  animatingCardKeys: [],
   pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
     id: "local-user",
@@ -353,7 +363,11 @@ function syncRemoteMessages(channels) {
   const nextSnapshot = JSON.stringify(nextMessages);
   if (previousSnapshot === nextSnapshot) return;
 
+  const animationKeys = collectGameAnimationKeys(state.messagesByChannel, nextMessages);
   state.messagesByChannel = nextMessages;
+  if (animationKeys.length) {
+    markAnimatingCards(animationKeys);
+  }
   render();
 }
 
@@ -471,7 +485,7 @@ function renderChannelLink(channel) {
 
 function renderMessages(messages) {
   return `<div class="message-stack">${messages.map((message) => `
-      <article class="message ${message.type === "game" ? "message-game" : ""} ${message.id === state.highlightedMessageId ? "message-highlighted" : ""} ${state.searchQuery.trim() ? "message-search-hit" : ""}" data-message-id="${escapeAttr(message.id)}">
+      <article class="message ${message.type === "game" ? "message-game" : ""} ${message.type === "blackjack" ? "message-blackjack" : ""} ${message.id === state.highlightedMessageId ? "message-highlighted" : ""} ${state.searchQuery.trim() ? "message-search-hit" : ""}" data-message-id="${escapeAttr(message.id)}">
         ${renderAvatar(message.avatarUrl, message.avatar || message.author)}
         <div class="message-body">
           <div class="message-meta">
@@ -479,7 +493,7 @@ function renderMessages(messages) {
             <span class="verified">${icon("verified", 16)}</span>
             <span class="message-time">${escapeHtml(formatMessageTime(message))}</span>
           </div>
-          <div class="message-text">${highlightMultilineText(message.content, state.searchQuery)}</div>
+          ${renderMessageContent(message)}
         </div>
       </article>`).join("")}</div>`;
 }
@@ -540,6 +554,15 @@ function bindRuntimeUi() {
       const config = GAME_BUTTONS.find((item) => item.game === gameId);
       if (!config) return;
       await sendGameMessage(config.game, config.label);
+    });
+  });
+  app.querySelectorAll("[data-bj-action]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const messageId = button.dataset.messageId;
+      const action = button.dataset.bjAction;
+      if (!messageId || !action) return;
+      await handleBlackjackAction(messageId, action);
     });
   });
 
@@ -671,6 +694,17 @@ async function submitMessage(content) {
 }
 
 async function sendGameMessage(game, label) {
+  if (game === "blackjack") {
+    const message = makeMessage({
+      type: "blackjack",
+      content: createBlackjackGameState()
+    });
+    appendLocalMessage(message);
+    markAnimatingCards(getAllBlackjackCardKeys(message));
+    await persistMessage(message);
+    return;
+  }
+
   const message = makeMessage({ type: "game", content: buildGameMessage(game, label) });
   appendLocalMessage(message);
   await persistMessage(message);
@@ -685,6 +719,27 @@ function appendLocalMessage(message) {
   state.messagesByChannel[channel.id] ||= [];
   state.messagesByChannel[channel.id] = sortMessages([...(state.messagesByChannel[channel.id] || []), message]);
   state.forceScrollToBottom = true;
+  render();
+}
+
+function replaceLocalMessage(message) {
+  const channelId = message.channelId || selectedChannel()?.id;
+  if (!channelId) return;
+
+  const replaceInList = (list) => {
+    const nextList = [...(list || [])];
+    const index = nextList.findIndex((entry) => entry.id === message.id);
+    if (index === -1) {
+      nextList.push(message);
+    } else {
+      nextList[index] = message;
+    }
+    return sortMessages(nextList);
+  };
+
+  state.messagesByChannel[channelId] = replaceInList(state.messagesByChannel[channelId]);
+  state.pendingMessagesByChannel[channelId] = (state.pendingMessagesByChannel[channelId] || [])
+    .filter((entry) => entry.id !== message.id);
   render();
 }
 
@@ -709,10 +764,37 @@ async function persistMessage(message) {
   }
 }
 
+async function persistMessageUpdate(message) {
+  try {
+    const response = await fetch("/api/messages", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scopeKey: state.scopeKey,
+        messageId: message.id,
+        message
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error("Message update request failed.");
+    }
+
+    const payload = await response.json();
+    replaceLocalMessage(payload.message || message);
+    return payload.message || message;
+  } catch (error) {
+    console.warn("Message update failed.", error);
+    return null;
+  }
+}
+
 function makeMessage({ type, content }) {
   const createdAtMs = Date.now();
+  const channelId = selectedChannel()?.id || state.selectedChannelId;
   return {
     id: uid(),
+    channelId,
     author: state.currentUser.displayName,
     avatar: state.currentUser.displayName,
     avatarUrl: state.currentUser.avatarUrl,
@@ -903,7 +985,7 @@ function filterMessages(messages, query) {
   return messages.filter((message) => {
     const haystack = [
       message.author,
-      message.content,
+      getSearchableMessageText(message),
       message.type
     ].join(" ").toLocaleLowerCase();
     return haystack.includes(normalizedQuery);
@@ -936,6 +1018,528 @@ function renderEmptyMessageState(channel) {
   return `<div class="empty-state">${escapeHtml(channel?.name || "Bu kanalda")} icin henuz mesaj yok. Ilk mesaji gonderin!</div>`;
 }
 
+function renderMessageContent(message) {
+  if (message.type === "blackjack") {
+    return renderBlackjackMessage(message);
+  }
+
+  return `<div class="message-text">${highlightMultilineText(message.content, state.searchQuery)}</div>`;
+}
+
+function renderBlackjackMessage(message) {
+  const game = normalizeBlackjackState(message.content);
+  const ownerCanPlay = game.ownerId === state.currentUser.id;
+  const activeHand = game.hands[game.activeHandIndex] || null;
+  const actions = getBlackjackActions(game, activeHand);
+
+  return `
+    <div class="blackjack-card">
+      <div class="blackjack-summary">
+        <div class="blackjack-summary-main">${highlightText(game.summary, state.searchQuery)}</div>
+        <div class="blackjack-summary-sub">${escapeHtml(game.status === "finished" ? game.resultSummary : BLACKJACK_RULE_LABEL)}</div>
+      </div>
+      <div class="blackjack-table">
+        <section class="blackjack-seat">
+          <div class="blackjack-seat-label">Kasa</div>
+          <div class="blackjack-cards">${game.dealer.cards.map((card) => renderPlayingCard(message.id, card)).join("")}</div>
+          <div class="blackjack-total">${escapeHtml(renderDealerTotal(game))}</div>
+        </section>
+        <section class="blackjack-hands">
+          ${game.hands.map((hand, index) => renderBlackjackHand(message.id, hand, index, game.activeHandIndex)).join("")}
+        </section>
+      </div>
+      <div class="blackjack-controls">
+        ${renderBlackjackActionButton(message.id, "hit", "Hit", actions.hit, ownerCanPlay)}
+        ${renderBlackjackActionButton(message.id, "stand", "Stand", actions.stand, ownerCanPlay)}
+        ${renderBlackjackActionButton(message.id, "double", "Double", actions.double, ownerCanPlay)}
+        ${renderBlackjackActionButton(message.id, "split", "Split", actions.split, ownerCanPlay)}
+      </div>
+    </div>
+  `;
+}
+
+function renderBlackjackHand(messageId, hand, index, activeHandIndex) {
+  const totals = calculateHandTotals(hand.cards);
+  const totalLabel = totals.best > 21 ? `Bust (${totals.best})` : `Toplam: ${totals.best}`;
+  const handLabel = hand.isSplitHand ? `El ${index + 1}` : "Oyuncu";
+  const flags = [
+    hand.isSplitAces ? "Split As" : "",
+    hand.doubled ? "Double" : "",
+    hand.resultLabel || ""
+  ].filter(Boolean).join(" • ");
+
+  return `
+    <div class="blackjack-hand ${index === activeHandIndex ? "is-active" : ""}">
+      <div class="blackjack-seat-label">${escapeHtml(handLabel)}</div>
+      <div class="blackjack-cards">${hand.cards.map((card) => renderPlayingCard(messageId, card)).join("")}</div>
+      <div class="blackjack-total">${escapeHtml(totalLabel)}</div>
+      ${flags ? `<div class="blackjack-flags">${escapeHtml(flags)}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderPlayingCard(messageId, card) {
+  const suit = BLACKJACK_SUITS.find((item) => item.key === card.suit) || BLACKJACK_SUITS[0];
+  const animate = state.animatingCardKeys.includes(`${messageId}:${card.id}`) ? " flip-in" : "";
+
+  if (card.hidden) {
+    return `<div class="playing-card is-face-down${animate}" data-card-id="${escapeAttr(card.id)}"><div class="playing-card-back"></div></div>`;
+  }
+
+  return `
+    <div class="playing-card ${suit.color === "red" ? "is-red" : ""}${animate}" data-card-id="${escapeAttr(card.id)}">
+      <div class="playing-card-corner">${escapeHtml(card.rank)}${escapeHtml(suit.symbol)}</div>
+      <div class="playing-card-center">${escapeHtml(suit.symbol)}</div>
+    </div>
+  `;
+}
+
+function renderBlackjackActionButton(messageId, action, label, enabled, ownerCanPlay) {
+  const disabled = !enabled || !ownerCanPlay;
+  return `<button type="button" class="btn btn-secondary blackjack-action" data-bj-action="${action}" data-message-id="${escapeAttr(messageId)}" ${disabled ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+}
+
+async function handleBlackjackAction(messageId, action) {
+  const message = findMessageById(messageId);
+  if (!message || message.type !== "blackjack") return;
+
+  const game = normalizeBlackjackState(message.content);
+  if (game.ownerId !== state.currentUser.id || game.status === "finished") return;
+
+  const nextGame = applyBlackjackAction(game, action);
+  if (!nextGame) return;
+
+  const nextMessage = {
+    ...message,
+    content: nextGame
+  };
+
+  markAnimatingCards(collectBlackjackCardChanges(message, nextMessage));
+  replaceLocalMessage(nextMessage);
+  await persistMessageUpdate(nextMessage);
+}
+
+function createBlackjackGameState() {
+  const deck = createShuffledDeck(6);
+  const hands = [
+    createBlackjackHand([drawVisibleCard(deck), drawVisibleCard(deck)])
+  ];
+  const dealer = {
+    cards: [drawVisibleCard(deck), drawHiddenCard(deck)],
+    resultLabel: ""
+  };
+
+  const game = {
+    game: "blackjack",
+    ownerId: state.currentUser.id,
+    ownerName: state.currentUser.displayName,
+    status: "playing",
+    summary: `${state.currentUser.displayName} blackjack oynuyor`,
+    resultSummary: "",
+    deck,
+    dealer,
+    hands,
+    activeHandIndex: 0
+  };
+
+  resolveInitialBlackjack(game);
+  return game;
+}
+
+function normalizeBlackjackState(content) {
+  const game = typeof content === "string" ? JSON.parse(content) : cloneData(content);
+  game.deck ||= [];
+  game.hands ||= [];
+  game.dealer ||= { cards: [] };
+  game.status ||= "playing";
+  game.summary ||= `${game.ownerName || "Oyuncu"} blackjack oynuyor`;
+  game.resultSummary ||= "";
+  return game;
+}
+
+function applyBlackjackAction(gameState, action) {
+  const game = cloneData(gameState);
+  const hand = game.hands[game.activeHandIndex];
+  if (!hand) return null;
+
+  const actions = getBlackjackActions(game, hand);
+  if (!actions[action]) return null;
+
+  if (action === "hit") {
+    hand.cards.push(drawVisibleCard(game.deck));
+    if (hand.isSplitAces || calculateHandTotals(hand.cards).best >= 21) {
+      finalizePlayerHand(game, hand, calculateHandTotals(hand.cards).best > 21 ? "Bust" : "Bekliyor");
+      return advanceBlackjackTurn(game);
+    }
+  }
+
+  if (action === "stand") {
+    finalizePlayerHand(game, hand, "Stand");
+    return advanceBlackjackTurn(game);
+  }
+
+  if (action === "double") {
+    hand.doubled = true;
+    hand.cards.push(drawVisibleCard(game.deck));
+    finalizePlayerHand(game, hand, calculateHandTotals(hand.cards).best > 21 ? "Bust" : "Double");
+    return advanceBlackjackTurn(game);
+  }
+
+  if (action === "split") {
+    splitBlackjackHand(game, game.activeHandIndex);
+    return advanceBlackjackTurn(game, true);
+  }
+
+  game.summary = `${game.ownerName} blackjack oynuyor`;
+  return game;
+}
+
+function advanceBlackjackTurn(game, afterSplit = false) {
+  if (afterSplit) {
+    const activeHand = game.hands[game.activeHandIndex];
+    if (activeHand?.isSplitAces && activeHand.completed) {
+      return advanceBlackjackTurn(game, false);
+    }
+    game.summary = `${game.ownerName} el ${game.activeHandIndex + 1} icin karar veriyor`;
+    return game;
+  }
+
+  while (game.activeHandIndex < game.hands.length && game.hands[game.activeHandIndex].completed) {
+    game.activeHandIndex += 1;
+  }
+
+  if (game.activeHandIndex >= game.hands.length) {
+    resolveDealerAndOutcome(game);
+    return game;
+  }
+
+  game.summary = `${game.ownerName} el ${game.activeHandIndex + 1} icin karar veriyor`;
+  return game;
+}
+
+function splitBlackjackHand(game, handIndex) {
+  const hand = game.hands[handIndex];
+  const [leftCard, rightCard] = hand.cards;
+  const splitAces = leftCard.rank === "A" && rightCard.rank === "A";
+
+  const leftHand = createBlackjackHand([leftCard, drawVisibleCard(game.deck)], {
+    isSplitHand: true,
+    isSplitAces: splitAces
+  });
+  const rightHand = createBlackjackHand([rightCard, drawVisibleCard(game.deck)], {
+    isSplitHand: true,
+    isSplitAces: splitAces
+  });
+
+  if (splitAces) {
+    finalizePlayerHand(leftHand, leftHand, "Split As");
+    finalizePlayerHand(rightHand, rightHand, "Split As");
+  }
+
+  game.hands.splice(handIndex, 1, leftHand, rightHand);
+}
+
+function resolveInitialBlackjack(game) {
+  const playerHand = game.hands[0];
+  const playerBlackjack = isNaturalBlackjack(playerHand);
+  const dealerBlackjack = isNaturalBlackjack({
+    cards: game.dealer.cards.map((card) => ({ ...card, hidden: false })),
+    isSplitHand: false,
+    isSplitAces: false
+  });
+
+  if (!playerBlackjack && !dealerBlackjack) {
+    game.summary = `${game.ownerName} blackjack oynuyor`;
+    return;
+  }
+
+  revealDealerCards(game.dealer.cards);
+  if (playerBlackjack && dealerBlackjack) {
+    playerHand.completed = true;
+    playerHand.resultLabel = "Push";
+    game.dealer.resultLabel = "Blackjack";
+    game.status = "finished";
+    game.resultSummary = "Push: iki taraf da blackjack yapti.";
+    game.summary = `${game.ownerName} push yapti`;
+    return;
+  }
+
+  if (playerBlackjack) {
+    playerHand.completed = true;
+    playerHand.resultLabel = "Blackjack";
+    game.status = "finished";
+    game.resultSummary = `${game.ownerName} natural blackjack yapti.`;
+    game.summary = `${game.ownerName} blackjack yapti`;
+    return;
+  }
+
+  playerHand.completed = true;
+  playerHand.resultLabel = "Kayip";
+  game.dealer.resultLabel = "Blackjack";
+  game.status = "finished";
+  game.resultSummary = "Kasa blackjack yapti.";
+  game.summary = `${game.ownerName} kaybetti`;
+}
+
+function resolveDealerAndOutcome(game) {
+  revealDealerCards(game.dealer.cards);
+  while (shouldDealerHit(game.dealer.cards)) {
+    game.dealer.cards.push(drawVisibleCard(game.deck));
+  }
+
+  const dealerTotals = calculateHandTotals(game.dealer.cards);
+  game.dealer.resultLabel = dealerTotals.best > 21 ? "Bust" : `Toplam ${dealerTotals.best}`;
+
+  for (const hand of game.hands) {
+    resolveBlackjackHandOutcome(hand, game.dealer.cards);
+  }
+
+  game.status = "finished";
+  game.resultSummary = summarizeBlackjackOutcome(game);
+  game.summary = `${game.ownerName} blackjack elini bitirdi`;
+}
+
+function resolveBlackjackHandOutcome(hand, dealerCards) {
+  const handTotals = calculateHandTotals(hand.cards);
+  const dealerTotals = calculateHandTotals(dealerCards);
+  const dealerBlackjack = isNaturalBlackjack({ cards: dealerCards, isSplitHand: false, isSplitAces: false });
+  const playerBlackjack = isNaturalBlackjack(hand);
+
+  hand.completed = true;
+  if (handTotals.best > 21) {
+    hand.resultLabel = "Bust";
+    return;
+  }
+
+  if (playerBlackjack && !dealerBlackjack) {
+    hand.resultLabel = "Blackjack";
+    return;
+  }
+
+  if (dealerBlackjack && !playerBlackjack) {
+    hand.resultLabel = "Kayip";
+    return;
+  }
+
+  if (dealerTotals.best > 21) {
+    hand.resultLabel = "Kazandi";
+    return;
+  }
+
+  if (handTotals.best > dealerTotals.best) {
+    hand.resultLabel = "Kazandi";
+    return;
+  }
+
+  if (handTotals.best < dealerTotals.best) {
+    hand.resultLabel = "Kayip";
+    return;
+  }
+
+  hand.resultLabel = "Push";
+}
+
+function summarizeBlackjackOutcome(game) {
+  return game.hands.map((hand, index) => {
+    const label = game.hands.length > 1 ? `El ${index + 1}` : "El";
+    return `${label}: ${hand.resultLabel}`;
+  }).join(" • ");
+}
+
+function getBlackjackActions(game, hand) {
+  const playing = game.status === "playing" && hand && !hand.completed;
+  const totals = hand ? calculateHandTotals(hand.cards) : { best: 0 };
+  const canAct = playing && totals.best < 21;
+
+  return {
+    hit: Boolean(canAct && !hand.isSplitAces),
+    stand: Boolean(playing),
+    double: Boolean(canAct && hand.cards.length === 2 && !hand.doubled && !hand.isSplitAces),
+    split: Boolean(
+      playing
+      && hand.cards.length === 2
+      && game.hands.length < 4
+      && getSplitValue(hand.cards[0]) === getSplitValue(hand.cards[1])
+    )
+  };
+}
+
+function calculateHandTotals(cards) {
+  let total = 0;
+  let aces = 0;
+
+  for (const card of cards) {
+    if (card.hidden) continue;
+    if (card.rank === "A") {
+      aces += 1;
+      total += 11;
+      continue;
+    }
+
+    if (["K", "Q", "J"].includes(card.rank)) {
+      total += 10;
+      continue;
+    }
+
+    total += Number(card.rank);
+  }
+
+  let best = total;
+  while (best > 21 && aces > 0) {
+    best -= 10;
+    aces -= 1;
+  }
+
+  return {
+    best,
+    soft: aces > 0
+  };
+}
+
+function isNaturalBlackjack(hand) {
+  if (!hand || hand.isSplitHand || hand.isSplitAces || hand.cards.length !== 2) return false;
+  return calculateHandTotals(hand.cards).best === 21;
+}
+
+function shouldDealerHit(cards) {
+  const totals = calculateHandTotals(cards);
+  if (totals.best < 17) return true;
+  return false;
+}
+
+function createBlackjackHand(cards, extra = {}) {
+  return {
+    id: uid(),
+    cards,
+    completed: false,
+    doubled: false,
+    resultLabel: "",
+    isSplitHand: false,
+    isSplitAces: false,
+    ...extra
+  };
+}
+
+function finalizePlayerHand(gameOrHand, handMaybe, label) {
+  const hand = handMaybe || gameOrHand;
+  hand.completed = true;
+  hand.resultLabel = label;
+}
+
+function createShuffledDeck(deckCount = 6) {
+  const deck = [];
+  for (let deckIndex = 0; deckIndex < deckCount; deckIndex += 1) {
+    for (const suit of BLACKJACK_SUITS) {
+      for (const rank of BLACKJACK_RANKS) {
+        deck.push({
+          id: uid(),
+          rank,
+          suit: suit.key,
+          hidden: false
+        });
+      }
+    }
+  }
+
+  for (let index = deck.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [deck[index], deck[swapIndex]] = [deck[swapIndex], deck[index]];
+  }
+
+  return deck;
+}
+
+function drawVisibleCard(deck) {
+  const card = deck.shift();
+  return { ...card, hidden: false };
+}
+
+function drawHiddenCard(deck) {
+  const card = deck.shift();
+  return { ...card, hidden: true };
+}
+
+function revealDealerCards(cards) {
+  cards.forEach((card) => {
+    card.hidden = false;
+  });
+}
+
+function renderDealerTotal(game) {
+  if (game.status !== "finished" && game.dealer.cards.some((card) => card.hidden)) {
+    return "Toplam: ?";
+  }
+
+  return `Toplam: ${calculateHandTotals(game.dealer.cards).best}`;
+}
+
+function getSplitValue(card) {
+  if (!card) return "";
+  if (card.rank === "A") return "A";
+  if (["10", "J", "Q", "K"].includes(card.rank)) return "10";
+  return card.rank;
+}
+
+function collectGameAnimationKeys(previousByChannel, nextByChannel) {
+  const keys = [];
+  for (const [channelId, messages] of Object.entries(nextByChannel || {})) {
+    const previousMessages = previousByChannel?.[channelId] || [];
+    for (const message of messages) {
+      if (message.type !== "blackjack") continue;
+      const previousMessage = previousMessages.find((entry) => entry.id === message.id);
+      keys.push(...collectBlackjackCardChanges(previousMessage, message));
+    }
+  }
+  return [...new Set(keys)];
+}
+
+function collectBlackjackCardChanges(previousMessage, nextMessage) {
+  if (!nextMessage || nextMessage.type !== "blackjack") return [];
+
+  const previousCards = flattenBlackjackCards(previousMessage?.content);
+  const nextCards = flattenBlackjackCards(nextMessage.content);
+  const previousMap = new Map(previousCards.map((card) => [card.id, card]));
+  const keys = [];
+
+  for (const card of nextCards) {
+    const previousCard = previousMap.get(card.id);
+    if (!previousCard || previousCard.hidden !== card.hidden) {
+      keys.push(`${nextMessage.id}:${card.id}`);
+    }
+  }
+
+  return keys;
+}
+
+function getAllBlackjackCardKeys(message) {
+  if (!message || message.type !== "blackjack") return [];
+  return flattenBlackjackCards(message.content).map((card) => `${message.id}:${card.id}`);
+}
+
+function flattenBlackjackCards(content) {
+  const game = typeof content === "string" ? JSON.parse(content) : (content || {});
+  const dealerCards = game.dealer?.cards || [];
+  const handCards = (game.hands || []).flatMap((hand) => hand.cards || []);
+  return [...dealerCards, ...handCards];
+}
+
+function markAnimatingCards(keys) {
+  if (!keys.length) return;
+  state.animatingCardKeys = [...new Set([...state.animatingCardKeys, ...keys])];
+  window.setTimeout(() => {
+    state.animatingCardKeys = state.animatingCardKeys.filter((key) => !keys.includes(key));
+    render();
+  }, 550);
+}
+
+function findMessageById(messageId) {
+  for (const messages of Object.values(state.messagesByChannel)) {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (message) return message;
+  }
+  return null;
+}
+
 function normalizeMessageTimestamp(message) {
   const serverCreatedAtMs = Number(message?.serverCreatedAtMs);
   if (Number.isFinite(serverCreatedAtMs) && serverCreatedAtMs > 0) {
@@ -953,6 +1557,20 @@ function normalizeMessageTimestamp(message) {
   }
 
   return 0;
+}
+
+function getSearchableMessageText(message) {
+  if (message.type === "blackjack") {
+    const game = normalizeBlackjackState(message.content);
+    return [
+      game.summary,
+      game.resultSummary,
+      ...(game.hands || []).map((hand) => hand.resultLabel),
+      ...(game.hands || []).flatMap((hand) => (hand.cards || []).map((card) => `${card.rank} ${card.suit}`))
+    ].join(" ");
+  }
+
+  return typeof message.content === "string" ? message.content : JSON.stringify(message.content || "");
 }
 
 function cssEscape(value) {
@@ -1090,6 +1708,10 @@ function parseCsv(value) {
     .split(",")
     .map((item) => item.trim().toLocaleLowerCase())
     .filter(Boolean);
+}
+
+function cloneData(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function icon(name, size = 24, className = "") {

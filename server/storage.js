@@ -36,6 +36,59 @@ export async function appendMessage(scopeKey, channelId, message) {
   return normalizedMessage;
 }
 
+export async function updateMessage(scopeKey, messageId, nextMessage) {
+  const normalizedMessage = normalizeMessage(nextMessage);
+
+  if (hasSupabaseConfig()) {
+    try {
+      const client = getSupabaseClient();
+      const updatePayload = {
+        author_name: normalizedMessage.author,
+        avatar_label: normalizedMessage.avatar,
+        avatar_url: normalizedMessage.avatarUrl,
+        content: serializeContent(normalizedMessage.content),
+        message_type: normalizedMessage.type,
+        created_at: normalizedMessage.createdAt,
+        created_at_ms: normalizedMessage.createdAtMs,
+        server_created_at: normalizedMessage.serverCreatedAt,
+        server_created_at_ms: normalizedMessage.serverCreatedAtMs
+      };
+
+      const { data, error } = await client
+        .from("messages")
+        .update(updatePayload)
+        .eq("scope_key", scopeKey)
+        .eq("id", messageId)
+        .select([
+          "id",
+          "scope_key",
+          "channel_id",
+          "author_name",
+          "avatar_label",
+          "avatar_url",
+          "content",
+          "message_type",
+          "created_at",
+          "created_at_ms",
+          "server_created_at",
+          "server_created_at_ms"
+        ].join(","))
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      return mapRowToMessage(data);
+    } catch (error) {
+      console.warn("Supabase update failed, falling back to ephemeral store.", error);
+      return updateEphemeralMessage(scopeKey, messageId, normalizedMessage);
+    }
+  }
+
+  return updateEphemeralMessage(scopeKey, messageId, normalizedMessage);
+}
+
 async function listSupabaseChannels(scopeKey) {
   const client = getSupabaseClient();
   const { data, error } = await client
@@ -81,7 +134,7 @@ async function appendSupabaseMessage(scopeKey, channelId, message) {
     author_name: message.author,
     avatar_label: message.avatar,
     avatar_url: message.avatarUrl,
-    content: message.content,
+    content: serializeContent(message.content),
     message_type: message.type,
     created_at: message.createdAt,
     created_at_ms: message.createdAtMs,
@@ -157,6 +210,20 @@ function appendEphemeralMessage(scopeKey, channelId, message) {
   ).slice(-MESSAGE_LIMIT);
 }
 
+function updateEphemeralMessage(scopeKey, messageId, nextMessage) {
+  const channels = globalThis.__activityChatStore.scopes?.[scopeKey]?.channels || {};
+  for (const [channelId, messages] of Object.entries(channels)) {
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index === -1) continue;
+    const merged = { ...messages[index], ...nextMessage, channelId };
+    channels[channelId][index] = normalizeMessage(merged);
+    channels[channelId] = sortMessages(channels[channelId]).slice(-MESSAGE_LIMIT);
+    return channels[channelId][index];
+  }
+
+  throw new Error("Message not found for update.");
+}
+
 function mapRowToMessage(row) {
   return normalizeMessage({
     id: row.id,
@@ -164,7 +231,7 @@ function mapRowToMessage(row) {
     author: row.author_name,
     avatar: row.avatar_label,
     avatarUrl: row.avatar_url,
-    content: row.content,
+    content: deserializeContent(row.content, row.message_type),
     type: row.message_type,
     createdAt: row.created_at,
     createdAtMs: row.created_at_ms,
@@ -195,6 +262,7 @@ function normalizeMessage(message) {
 
   return {
     ...message,
+    content: normalizeContent(message.content),
     createdAt: message?.createdAt || new Date(createdAtMs).toISOString(),
     createdAtMs,
     serverCreatedAt: message?.serverCreatedAt || new Date(serverCreatedAtMs).toISOString(),
@@ -236,4 +304,36 @@ function normalizeServerCreatedAtMs(message, fallback = Date.now()) {
 
 function cloneChannels(channels) {
   return normalizeChannels(JSON.parse(JSON.stringify(channels || {})));
+}
+
+function serializeContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return JSON.stringify(content ?? null);
+}
+
+function deserializeContent(content, type) {
+  if (typeof content !== "string") {
+    return content;
+  }
+
+  if (!String(type || "").startsWith("blackjack")) {
+    return content;
+  }
+
+  try {
+    return JSON.parse(content);
+  } catch {
+    return content;
+  }
+}
+
+function normalizeContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content ?? "";
 }
