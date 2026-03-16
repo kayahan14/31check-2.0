@@ -6,12 +6,15 @@ const DRAGON_CONFIG_TYPE = "dragon_config";
 const BASE_STAKE = 100;
 const LOBBY_MS = 10000;
 const DRAGON_SPEED_STAGES = [
+  { multiplier: 1.5, speed: 0.45 },
+  { multiplier: 1.75, speed: 0.5 },
   { multiplier: 2, speed: 0.6 },
+  { multiplier: 2.5, speed: 0.8 },
   { multiplier: 3, speed: 1 },
   { multiplier: 4, speed: 1.25 },
   { multiplier: 5, speed: 1.5 }
 ];
-const DRAGON_ALL_CASHED_OUT_SPEED = 5;
+const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: LOBBY_MS,
   speedFactor: 0.35,
