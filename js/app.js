@@ -1681,7 +1681,7 @@ function renderDragonRealtimeView() {
         <div class="dragon-modal-header">
           <div>
             <div class="dragon-modal-title">Ejderha</div>
-            <div class="dragon-modal-subtitle">${escapeHtml(phase === "lobby" ? `Baslangica ${secondsLeft}s var` : (game.resultSummary || "Ejderha oyunda"))}</div>
+            <div class="dragon-modal-subtitle" data-dragon-live-subtitle>${escapeHtml(phase === "lobby" ? `Baslangica ${secondsLeft}s var` : (game.resultSummary || "Ejderha oyunda"))}</div>
           </div>
           <div class="dragon-modal-multiplier" data-dragon-live-multiplier>${escapeHtml(formatMultiplier(multiplier))}</div>
         </div>
@@ -2921,16 +2921,31 @@ function syncDragonModalLoop() {
     const game = normalizeDragonState(message.content);
     const phase = getDragonPhase(game);
     const participant = getDragonParticipant(game, state.currentUser.id);
-    const joinButton = document.querySelector("[data-dragon-join]");
-    const collectButton = document.querySelector("[data-dragon-collect]");
-    const shouldShowJoin = phase === "lobby";
-    const shouldShowCollect = phase === "playing" || phase === "finished";
-    if ((shouldShowJoin && !joinButton) || (shouldShowCollect && !collectButton)) {
-      render();
-      return;
+    const isDedicatedDragonView = isCasinoDragonView() && !state.dragonModalMessageId;
+    if (isDedicatedDragonView) {
+      const expectedHubAction = phase === "lobby"
+        ? (participant ? "noop" : "join")
+        : phase === "playing"
+          ? "cashout"
+          : "start";
+      const currentHubAction = document.querySelector("[data-dragon-hub-action]")?.dataset.dragonHubAction || "";
+      if (currentHubAction !== expectedHubAction) {
+        render();
+        return;
+      }
+    } else {
+      const joinButton = document.querySelector("[data-dragon-join]");
+      const collectButton = document.querySelector("[data-dragon-collect]");
+      const shouldShowJoin = phase === "lobby";
+      const shouldShowCollect = phase === "playing" || phase === "finished";
+      if ((shouldShowJoin && !joinButton) || (shouldShowCollect && !collectButton)) {
+        render();
+        return;
+      }
     }
     const multiplierNode = document.querySelector("[data-dragon-live-multiplier]");
     const collectibleNode = document.querySelector("[data-dragon-live-collectible]");
+    const subtitleNode = document.querySelector("[data-dragon-live-subtitle]");
     if (multiplierNode) {
       const multiplier = phase === "playing" ? getDragonLiveMultiplier(game) : roundMultiplier(game.finalMultiplier || 1);
       multiplierNode.textContent = formatMultiplier(multiplier);
@@ -2942,6 +2957,12 @@ function syncDragonModalLoop() {
           ? roundCoinValue(game.baseStake * getDragonLiveMultiplier(game))
           : 0;
       collectibleNode.textContent = formatCoinValue(collectible);
+    }
+    if (subtitleNode) {
+      const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
+      subtitleNode.textContent = phase === "lobby"
+        ? `Baslangica ${secondsLeft}s var`
+        : (game.resultSummary || "Ejderha oyunda");
     }
 
     state.dragonModalRaf = window.requestAnimationFrame(tick);
