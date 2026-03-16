@@ -65,6 +65,15 @@ const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: 10000,
   speedFactor: 0.35,
+  luckyChancePercent: 5,
+  luckyCrashPerThousand: 1,
+  lowCapMultiplier: 1.15,
+  lowCrashPerThousand: 20,
+  midCapMultiplier: 3,
+  midCrashPerThousand: 7,
+  highCapMultiplier: 10,
+  highCrashPerThousand: 5,
+  ultraCrashPerThousand: 3,
   testMode: false,
   testMaxMultiplier: 1.1
 };
@@ -127,6 +136,7 @@ const state = {
   pendingUpdatedMessages: {},
   pendingMessagesByChannel: buildEmptyMessageState(),
   userModalView: "categories",
+  userGameConfigView: "dragon",
   currentUser: {
     id: "local-user",
     username: "31check",
@@ -228,7 +238,20 @@ function bindStaticEvents() {
   });
   document.getElementById("userViewDragon").addEventListener("click", () => {
     state.userModalView = "dragon";
+    state.userGameConfigView = "dragon";
     state.dragonConfigDraft = normalizeDragonConfig(state.dragonConfig);
+    renderUserModal();
+  });
+  document.getElementById("userConfigDragon").addEventListener("click", () => {
+    state.userGameConfigView = "dragon";
+    renderUserModal();
+  });
+  document.getElementById("userConfigBlackjack").addEventListener("click", () => {
+    state.userGameConfigView = "blackjack";
+    renderUserModal();
+  });
+  document.getElementById("userConfigMines").addEventListener("click", () => {
+    state.userGameConfigView = "mines";
     renderUserModal();
   });
   document.getElementById("dragonLobbyInput").addEventListener("change", (event) => {
@@ -242,6 +265,69 @@ function bindStaticEvents() {
     state.dragonConfigDraft = normalizeDragonConfig({
       ...state.dragonConfigDraft,
       speedFactor: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonLuckyChanceInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      luckyChancePercent: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonLuckyCrashInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      luckyCrashPerThousand: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonLowCapInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      lowCapMultiplier: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonLowChanceInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      lowCrashPerThousand: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonMidCapInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      midCapMultiplier: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonMidChanceInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      midCrashPerThousand: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonHighCapInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      highCapMultiplier: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonHighChanceInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      highCrashPerThousand: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonUltraChanceInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      ultraCrashPerThousand: Number(event.currentTarget.value)
     });
     renderUserModal();
   });
@@ -1024,8 +1110,23 @@ function renderUserModal() {
   const dragonPanel = document.getElementById("userDragonPanel");
   const dragonLobbyInput = document.getElementById("dragonLobbyInput");
   const dragonSpeedInput = document.getElementById("dragonSpeedInput");
+  const dragonLuckyChanceInput = document.getElementById("dragonLuckyChanceInput");
+  const dragonLuckyCrashInput = document.getElementById("dragonLuckyCrashInput");
+  const dragonLowCapInput = document.getElementById("dragonLowCapInput");
+  const dragonLowChanceInput = document.getElementById("dragonLowChanceInput");
+  const dragonMidCapInput = document.getElementById("dragonMidCapInput");
+  const dragonMidChanceInput = document.getElementById("dragonMidChanceInput");
+  const dragonHighCapInput = document.getElementById("dragonHighCapInput");
+  const dragonHighChanceInput = document.getElementById("dragonHighChanceInput");
+  const dragonUltraChanceInput = document.getElementById("dragonUltraChanceInput");
   const dragonTestCapInput = document.getElementById("dragonTestCapInput");
   const dragonTestToggleButton = document.getElementById("dragonTestToggleButton");
+  const dragonConfigTab = document.getElementById("userConfigDragon");
+  const blackjackConfigTab = document.getElementById("userConfigBlackjack");
+  const minesConfigTab = document.getElementById("userConfigMines");
+  const dragonConfigPanel = document.getElementById("dragonConfigPanel");
+  const blackjackConfigPanel = document.getElementById("blackjackConfigPanel");
+  const minesConfigPanel = document.getElementById("minesConfigPanel");
 
   const isDragonView = state.currentUser.isAdmin && state.userModalView === "dragon";
   categoriesTab.classList.toggle("active", !isDragonView);
@@ -1033,6 +1134,18 @@ function renderUserModal() {
   dragonTab.hidden = !state.currentUser.isAdmin;
   categoriesPanel.hidden = isDragonView;
   dragonPanel.hidden = !isDragonView;
+  dragonConfigTab?.classList.toggle("active", state.userGameConfigView === "dragon");
+  blackjackConfigTab?.classList.toggle("active", state.userGameConfigView === "blackjack");
+  minesConfigTab?.classList.toggle("active", state.userGameConfigView === "mines");
+  if (dragonConfigPanel) {
+    dragonConfigPanel.hidden = state.userGameConfigView !== "dragon";
+  }
+  if (blackjackConfigPanel) {
+    blackjackConfigPanel.hidden = state.userGameConfigView !== "blackjack";
+  }
+  if (minesConfigPanel) {
+    minesConfigPanel.hidden = state.userGameConfigView !== "mines";
+  }
 
   categoryList.innerHTML = state.categories.length
     ? state.categories.map((category) => `
@@ -1056,6 +1169,33 @@ function renderUserModal() {
   }
   if (dragonSpeedInput) {
     dragonSpeedInput.value = state.dragonConfigDraft.speedFactor.toFixed(2);
+  }
+  if (dragonLuckyChanceInput) {
+    dragonLuckyChanceInput.value = String(state.dragonConfigDraft.luckyChancePercent);
+  }
+  if (dragonLuckyCrashInput) {
+    dragonLuckyCrashInput.value = String(state.dragonConfigDraft.luckyCrashPerThousand);
+  }
+  if (dragonLowCapInput) {
+    dragonLowCapInput.value = state.dragonConfigDraft.lowCapMultiplier.toFixed(2);
+  }
+  if (dragonLowChanceInput) {
+    dragonLowChanceInput.value = String(state.dragonConfigDraft.lowCrashPerThousand);
+  }
+  if (dragonMidCapInput) {
+    dragonMidCapInput.value = state.dragonConfigDraft.midCapMultiplier.toFixed(2);
+  }
+  if (dragonMidChanceInput) {
+    dragonMidChanceInput.value = String(state.dragonConfigDraft.midCrashPerThousand);
+  }
+  if (dragonHighCapInput) {
+    dragonHighCapInput.value = state.dragonConfigDraft.highCapMultiplier.toFixed(2);
+  }
+  if (dragonHighChanceInput) {
+    dragonHighChanceInput.value = String(state.dragonConfigDraft.highCrashPerThousand);
+  }
+  if (dragonUltraChanceInput) {
+    dragonUltraChanceInput.value = String(state.dragonConfigDraft.ultraCrashPerThousand);
   }
   if (dragonTestCapInput) {
     dragonTestCapInput.value = state.dragonConfigDraft.testMaxMultiplier.toFixed(2);
@@ -3062,9 +3202,23 @@ function formatDecimalInput(value) {
 
 function normalizeDragonConfig(config) {
   const next = config || {};
+  const luckyChancePercent = Math.min(100, Math.max(0, Math.round(Number(next.luckyChancePercent ?? DEFAULT_DRAGON_CONFIG.luckyChancePercent))));
+  const luckyCrashPerThousand = Math.min(999, Math.max(1, Math.round(Number(next.luckyCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.luckyCrashPerThousand))));
+  const lowCapMultiplier = Math.max(1.01, Math.round(Number(next.lowCapMultiplier ?? DEFAULT_DRAGON_CONFIG.lowCapMultiplier) * 100) / 100);
+  const midCapMultiplier = Math.max(lowCapMultiplier + 0.01, Math.round(Number(next.midCapMultiplier ?? DEFAULT_DRAGON_CONFIG.midCapMultiplier) * 100) / 100);
+  const highCapMultiplier = Math.max(midCapMultiplier + 0.01, Math.round(Number(next.highCapMultiplier ?? DEFAULT_DRAGON_CONFIG.highCapMultiplier) * 100) / 100);
   return {
     lobbyMs: Math.min(60000, Math.max(1000, Math.round(Number(next.lobbyMs ?? DEFAULT_DRAGON_CONFIG.lobbyMs)))),
     speedFactor: Math.min(5, Math.max(0.1, Math.round(Number(next.speedFactor ?? DEFAULT_DRAGON_CONFIG.speedFactor) * 100) / 100)),
+    luckyChancePercent,
+    luckyCrashPerThousand,
+    lowCapMultiplier,
+    lowCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.lowCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.lowCrashPerThousand)))),
+    midCapMultiplier,
+    midCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.midCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.midCrashPerThousand)))),
+    highCapMultiplier,
+    highCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.highCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.highCrashPerThousand)))),
+    ultraCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.ultraCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.ultraCrashPerThousand)))),
     testMode: Boolean(next.testMode),
     testMaxMultiplier: Math.min(10, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
   };
@@ -3395,8 +3549,32 @@ function generateDragonCrashMultiplier(config = DEFAULT_DRAGON_CONFIG) {
     }
     return roundMultiplier(floorMultiplier + Math.random() * (10 - floorMultiplier));
   }
-  const raw = 0.99 / Math.max(0.04, 1 - Math.random());
-  return roundMultiplier(Math.max(1.15, Math.min(25, raw)));
+  const boosted = Math.random() < (normalizedConfig.luckyChancePercent / 100);
+  let multiplier = 1;
+  while (multiplier < 1000) {
+    const crashChance = getDragonCrashChance(normalizedConfig, multiplier, boosted);
+    if (Math.random() < crashChance) {
+      return roundMultiplier(multiplier);
+    }
+    multiplier = roundMultiplier(multiplier + 0.01);
+  }
+  return 1000;
+}
+
+function getDragonCrashChance(config, multiplier, boosted = false) {
+  if (boosted) {
+    return Math.min(0.999, config.luckyCrashPerThousand / 1000);
+  }
+  if (multiplier < config.lowCapMultiplier) {
+    return Math.min(0.999, config.lowCrashPerThousand / 1000);
+  }
+  if (multiplier < config.midCapMultiplier) {
+    return Math.min(0.999, config.midCrashPerThousand / 1000);
+  }
+  if (multiplier < config.highCapMultiplier) {
+    return Math.min(0.999, config.highCrashPerThousand / 1000);
+  }
+  return Math.min(0.999, config.ultraCrashPerThousand / 1000);
 }
 
 function roundMultiplier(value) {

@@ -18,6 +18,15 @@ const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: LOBBY_MS,
   speedFactor: 0.35,
+  luckyChancePercent: 5,
+  luckyCrashPerThousand: 1,
+  lowCapMultiplier: 1.15,
+  lowCrashPerThousand: 20,
+  midCapMultiplier: 3,
+  midCrashPerThousand: 7,
+  highCapMultiplier: 10,
+  highCrashPerThousand: 5,
+  ultraCrashPerThousand: 3,
   testMode: false,
   testMaxMultiplier: 1.1
 };
@@ -366,9 +375,23 @@ function normalizeDragonState(content, now = Date.now()) {
 
 function normalizeDragonConfig(config) {
   const next = config || {};
+  const luckyChancePercent = Math.min(100, Math.max(0, Math.round(Number(next.luckyChancePercent ?? DEFAULT_DRAGON_CONFIG.luckyChancePercent))));
+  const luckyCrashPerThousand = Math.min(999, Math.max(1, Math.round(Number(next.luckyCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.luckyCrashPerThousand))));
+  const lowCapMultiplier = Math.max(1.01, Math.round(Number(next.lowCapMultiplier ?? DEFAULT_DRAGON_CONFIG.lowCapMultiplier) * 100) / 100);
+  const midCapMultiplier = Math.max(lowCapMultiplier + 0.01, Math.round(Number(next.midCapMultiplier ?? DEFAULT_DRAGON_CONFIG.midCapMultiplier) * 100) / 100);
+  const highCapMultiplier = Math.max(midCapMultiplier + 0.01, Math.round(Number(next.highCapMultiplier ?? DEFAULT_DRAGON_CONFIG.highCapMultiplier) * 100) / 100);
   return {
     lobbyMs: Math.min(60000, Math.max(1000, Math.round(Number(next.lobbyMs ?? DEFAULT_DRAGON_CONFIG.lobbyMs)))),
     speedFactor: Math.min(5, Math.max(0.1, Math.round(Number(next.speedFactor ?? DEFAULT_DRAGON_CONFIG.speedFactor) * 100) / 100)),
+    luckyChancePercent,
+    luckyCrashPerThousand,
+    lowCapMultiplier,
+    lowCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.lowCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.lowCrashPerThousand)))),
+    midCapMultiplier,
+    midCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.midCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.midCrashPerThousand)))),
+    highCapMultiplier,
+    highCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.highCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.highCrashPerThousand)))),
+    ultraCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.ultraCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.ultraCrashPerThousand)))),
     testMode: Boolean(next.testMode),
     testMaxMultiplier: Math.min(10, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
   };
@@ -472,9 +495,32 @@ function generateDragonCrashMultiplier(config = DEFAULT_DRAGON_CONFIG) {
     }
     return roundMultiplier(floorMultiplier + Math.random() * (10 - floorMultiplier));
   }
+  const boosted = Math.random() < (normalizedConfig.luckyChancePercent / 100);
+  let multiplier = 1;
+  while (multiplier < 1000) {
+    const crashChance = getDragonCrashChance(normalizedConfig, multiplier, boosted);
+    if (Math.random() < crashChance) {
+      return roundMultiplier(multiplier);
+    }
+    multiplier = roundMultiplier(multiplier + 0.01);
+  }
+  return 1000;
+}
 
-  const raw = 0.99 / Math.max(0.04, 1 - Math.random());
-  return roundMultiplier(Math.max(1.15, Math.min(25, raw)));
+function getDragonCrashChance(config, multiplier, boosted = false) {
+  if (boosted) {
+    return Math.min(0.999, config.luckyCrashPerThousand / 1000);
+  }
+  if (multiplier < config.lowCapMultiplier) {
+    return Math.min(0.999, config.lowCrashPerThousand / 1000);
+  }
+  if (multiplier < config.midCapMultiplier) {
+    return Math.min(0.999, config.midCrashPerThousand / 1000);
+  }
+  if (multiplier < config.highCapMultiplier) {
+    return Math.min(0.999, config.highCrashPerThousand / 1000);
+  }
+  return Math.min(0.999, config.ultraCrashPerThousand / 1000);
 }
 
 function roundMultiplier(value) {

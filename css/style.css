@@ -1538,6 +1538,46 @@ svg { display: block; }
   color: #dfe4ff;
   box-shadow: inset 0 0 0 1px rgba(120, 133, 255, 0.28);
 }
+.config-game-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.config-game-tab {
+  flex: 1;
+  min-height: 34px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.config-game-tab.active {
+  background: rgba(88, 101, 242, 0.18);
+  color: #e6eaff;
+  box-shadow: inset 0 0 0 1px rgba(120, 133, 255, 0.24);
+}
+.config-game-panel[hidden] {
+  display: none;
+}
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.config-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+.config-card .field-label {
+  font-size: 12px;
+}
 .user-modal-section[hidden] {
   display: none;
 }
@@ -1633,6 +1673,9 @@ svg { display: block; }
   .chat-header, .composer { flex-wrap: wrap; }
   .search { width: 100%; }
   .row { flex-direction: column; }
+  .config-grid {
+    grid-template-columns: 1fr;
+  }
   .playing-card {
     width: 42px;
     height: 60px;

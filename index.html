@@ -58,7 +58,7 @@
       <div class="modal-body">
         <div class="user-menu-switch">
           <button type="button" class="user-menu-tab active" id="userViewCategories">Kategoriler</button>
-          <button type="button" class="user-menu-tab" id="userViewDragon">Ejderha</button>
+          <button type="button" class="user-menu-tab" id="userViewDragon">Oyun Ayarlari</button>
         </div>
         <section id="userCategoriesPanel" class="user-modal-section">
           <form id="categoryForm" class="stack-lg">
@@ -78,25 +78,80 @@
           </div>
         </section>
         <section id="userDragonPanel" class="user-modal-section" hidden>
-          <div class="stack-lg">
-            <label class="field-label" for="dragonLobbyInput">Baslangic Bekleme Suresi (sn)</label>
-            <input id="dragonLobbyInput" class="field" type="number" min="1" step="1">
+          <div class="config-game-switch">
+            <button type="button" class="config-game-tab active" id="userConfigDragon">Ejderha</button>
+            <button type="button" class="config-game-tab" id="userConfigBlackjack">Blackjack</button>
+            <button type="button" class="config-game-tab" id="userConfigMines">Mines</button>
           </div>
-          <div class="stack-lg">
-            <label class="field-label" for="dragonSpeedInput">X Artis Hizi</label>
-            <input id="dragonSpeedInput" class="field" type="number" min="0.10" max="5" step="0.05">
-          </div>
-          <div class="stack-lg">
-            <label class="field-label" for="dragonTestCapInput">Test Modu Taban X</label>
-            <input id="dragonTestCapInput" class="field" type="number" min="1.10" max="10" step="0.10">
-          </div>
-          <div class="row">
-            <button type="button" class="btn btn-secondary grow" id="dragonTestToggleButton">Test Kapali</button>
-            <button type="button" class="btn btn-primary grow" id="dragonSaveButton">Kaydet</button>
-          </div>
-          <div class="hint">
-            <strong>Ejderha Ayari:</strong> Buradaki ayarlar yeni tur baslarken kullanilir. Aktif turun davranisini degistirmez.
-          </div>
+          <section id="dragonConfigPanel" class="config-game-panel">
+            <div class="config-grid">
+              <label class="config-card">
+                <span class="field-label" for="dragonLobbyInput">Baslangic Bekleme Suresi (sn)</span>
+                <input id="dragonLobbyInput" class="field" type="number" min="1" step="1">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonSpeedInput">X Artis Hizi</span>
+                <input id="dragonSpeedInput" class="field" type="number" min="0.10" max="5" step="0.05">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonLuckyChanceInput">Sans Tetikleme (%)</span>
+                <input id="dragonLuckyChanceInput" class="field" type="number" min="0" max="100" step="1">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonLuckyCrashInput">Sansli Tur Patlama (1000'de)</span>
+                <input id="dragonLuckyCrashInput" class="field" type="number" min="1" max="999" step="1">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonLowCapInput">Ilk Esik X</span>
+                <input id="dragonLowCapInput" class="field" type="number" min="1.01" max="10" step="0.01">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonLowChanceInput">Ilk Bant Patlama (1000'de)</span>
+                <input id="dragonLowChanceInput" class="field" type="number" min="1" max="999" step="1">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonMidCapInput">Ikinci Esik X</span>
+                <input id="dragonMidCapInput" class="field" type="number" min="1.50" max="25" step="0.01">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonMidChanceInput">Ikinci Bant Patlama (1000'de)</span>
+                <input id="dragonMidChanceInput" class="field" type="number" min="1" max="999" step="1">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonHighCapInput">Ucuncu Esik X</span>
+                <input id="dragonHighCapInput" class="field" type="number" min="3.00" max="100" step="0.01">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonHighChanceInput">Ucuncu Bant Patlama (1000'de)</span>
+                <input id="dragonHighChanceInput" class="field" type="number" min="1" max="999" step="1">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonUltraChanceInput">Son Bant Patlama (1000'de)</span>
+                <input id="dragonUltraChanceInput" class="field" type="number" min="1" max="999" step="1">
+              </label>
+              <label class="config-card">
+                <span class="field-label" for="dragonTestCapInput">Test Modu Taban X</span>
+                <input id="dragonTestCapInput" class="field" type="number" min="1.10" max="10" step="0.10">
+              </label>
+            </div>
+            <div class="row">
+              <button type="button" class="btn btn-secondary grow" id="dragonTestToggleButton">Test Kapali</button>
+              <button type="button" class="btn btn-primary grow" id="dragonSaveButton">Kaydet</button>
+            </div>
+            <div class="hint">
+              <strong>Ejderha Ayari:</strong> Sonuc tur basinda belirlenir. Bu ayarlar sadece yeni turlara uygulanir.
+            </div>
+          </section>
+          <section id="blackjackConfigPanel" class="config-game-panel" hidden>
+            <div class="hint">
+              <strong>Blackjack:</strong> Burasi sonraki turda masa kurallari icin kullanilacak.
+            </div>
+          </section>
+          <section id="minesConfigPanel" class="config-game-panel" hidden>
+            <div class="hint">
+              <strong>Mines:</strong> Burasi sonraki turda oran ve mayin kurallari icin kullanilacak.
+            </div>
+          </section>
         </section>
       </div>
       <div class="modal-footer">
