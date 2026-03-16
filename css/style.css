@@ -380,7 +380,7 @@ svg { display: block; }
 }
 .message-body { flex: 1; min-width: 0; }
 .message-blackjack .message-body {
-  max-width: 350px;
+  max-width: 300px;
 }
 .message-meta { gap: 8px; margin-bottom: 4px; }
 .message-author {
@@ -410,7 +410,7 @@ svg { display: block; }
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: min(100%, 330px);
+  width: min(100%, 280px);
   padding: 8px;
   border-radius: 10px;
   background: linear-gradient(180deg, rgba(32, 34, 37, 0.92), rgba(24, 26, 28, 0.96));
@@ -456,9 +456,7 @@ svg { display: block; }
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 80%;
-  max-width: 100%;
-  align-self: flex-start;
+  width: 100%;
   padding: 8px;
   border-radius: 10px;
   background: radial-gradient(circle at top, rgba(67, 181, 129, 0.2), rgba(24, 92, 56, 0.28));
@@ -567,9 +565,7 @@ svg { display: block; }
 .blackjack-controls {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  width: 80%;
-  max-width: 100%;
-  align-self: flex-start;
+  width: 100%;
   gap: 5px;
 }
 .blackjack-action {
