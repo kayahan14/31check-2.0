@@ -375,6 +375,16 @@ function syncRemoteMessages(channels) {
     nextMessages[channelId] = sortMessages(list);
   }
 
+  for (const [channelId, currentList] of Object.entries(state.messagesByChannel || {})) {
+    if (!currentList?.length || !nextMessages[channelId]?.length) continue;
+
+    nextMessages[channelId] = sortMessages((nextMessages[channelId] || []).map((remoteMessage) => {
+      const localMessage = currentList.find((message) => message.id === remoteMessage.id);
+      if (!localMessage) return remoteMessage;
+      return shouldPreferLocalMessage(localMessage, remoteMessage) ? localMessage : remoteMessage;
+    }));
+  }
+
   const previousSnapshot = JSON.stringify(state.messagesByChannel);
   const nextSnapshot = JSON.stringify(nextMessages);
   if (previousSnapshot === nextSnapshot) return;
@@ -926,6 +936,21 @@ function mergeMessages(channels) {
   return merged;
 }
 
+function shouldPreferLocalMessage(localMessage, remoteMessage) {
+  if (localMessage?.type !== "blackjack" || remoteMessage?.type !== "blackjack") {
+    return false;
+  }
+
+  return getBlackjackRevision(localMessage) > getBlackjackRevision(remoteMessage);
+}
+
+function getBlackjackRevision(message) {
+  if (message?.type !== "blackjack") return 0;
+  const game = normalizeBlackjackState(message.content);
+  const revision = Number(game?.revision);
+  return Number.isFinite(revision) && revision > 0 ? revision : 1;
+}
+
 function syncUserTag() {
   userModalTag.textContent = `${state.currentUser.displayName} (${state.currentUser.tag})`;
 }
@@ -1221,6 +1246,7 @@ function createBlackjackGameState() {
     game: "blackjack",
     ownerId: state.currentUser.id,
     ownerName: state.currentUser.displayName,
+    revision: 1,
     status: "playing",
     summary: `${state.currentUser.displayName} blackjack oynuyor`,
     resultSummary: "",
@@ -1240,6 +1266,7 @@ function normalizeBlackjackState(content) {
   game.hands ||= [];
   game.dealer ||= { cards: [] };
   game.status ||= "playing";
+  game.revision = Number(game.revision) > 0 ? Number(game.revision) : 1;
   game.summary ||= `${game.ownerName || "Oyuncu"} blackjack oynuyor`;
   game.resultSummary ||= "";
   return game;
@@ -1247,6 +1274,7 @@ function normalizeBlackjackState(content) {
 
 function applyBlackjackAction(gameState, action) {
   const game = cloneData(gameState);
+  game.revision = Number(game.revision || 1) + 1;
   const hand = game.hands[game.activeHandIndex];
   if (!hand) return null;
 
