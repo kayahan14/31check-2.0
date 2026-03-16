@@ -510,7 +510,6 @@ function render() {
         </aside>
       </div>
     </main>
-    ${renderMinesSetupModal()}
     ${renderToast()}
   `;
 
@@ -604,7 +603,16 @@ function renderMembers() {
 }
 
 function renderGameButtons() {
-  return GAME_BUTTONS.map((button) => `<button type="button" data-game-id="${button.game}" ${state.isMessagesLoading ? "disabled" : ""}>${escapeHtml(button.label)}</button>`).join("");
+  return GAME_BUTTONS.map((button) => {
+    const isMines = button.game === "mines";
+    const popover = isMines ? renderMinesSetupPopover() : "";
+    return `
+      <div class="game-button-wrap ${isMines ? "is-mines" : ""}">
+        <button type="button" data-game-id="${button.game}" aria-expanded="${isMines && state.minesSetupOpen ? "true" : "false"}" ${state.isMessagesLoading ? "disabled" : ""}>${escapeHtml(button.label)}</button>
+        ${popover}
+      </div>
+    `;
+  }).join("");
 }
 
 function renderMemberRow(member) {
@@ -864,6 +872,10 @@ async function sendGameMessage(game, label) {
   }
 
   if (game === "mines") {
+    if (findActiveMinesMessageForCurrentUser()) {
+      showToast("Önce aktif mines oyununu bitir.");
+      return;
+    }
     const message = makeMessage({
       type: "mines",
       content: createMinesGameState(state.preferredMineCount)
@@ -879,16 +891,29 @@ async function sendGameMessage(game, label) {
 }
 
 function openMinesSetup() {
-  state.minesSetupOpen = true;
+  if (state.isMessagesLoading) return;
+  if (findActiveMinesMessageForCurrentUser()) {
+    closeMinesSetup();
+    showToast("Önce aktif mines oyununu bitir.");
+    return;
+  }
+  state.minesSetupOpen = !state.minesSetupOpen;
   render();
 }
 
 function closeMinesSetup() {
+  if (!state.minesSetupOpen) return;
   state.minesSetupOpen = false;
   render();
 }
 
 async function startConfiguredMinesGame() {
+  if (state.isMessagesLoading) return;
+  if (findActiveMinesMessageForCurrentUser()) {
+    closeMinesSetup();
+    showToast("Önce aktif mines oyununu bitir.");
+    return;
+  }
   state.minesSetupOpen = false;
   render();
   await sendGameMessage("mines", "💣 Mines");
@@ -1172,22 +1197,17 @@ function renderScrollToBottomButton() {
   return `<button type="button" id="scrollToBottomButton" class="scroll-to-bottom ${hidden ? "" : "visible"}" aria-label="En alta git">${icon("chevron-down", 18)}</button>`;
 }
 
-function renderMinesSetupModal() {
-  if (!state.minesSetupOpen) return "";
-
+function renderMinesSetupPopover() {
+  if (!state.minesSetupOpen || state.isMessagesLoading) return "";
   return `
-    <div class="inline-overlay">
-      <div class="inline-modal">
-        <div class="inline-modal-title">Mines Ayarı</div>
-        <div class="inline-modal-subtitle">Kaç mayın olsun?</div>
-        <div class="mine-option-row">
-          ${MINES_MINE_OPTIONS.map((count) => `<button type="button" class="mine-option ${state.preferredMineCount === count ? "is-active" : ""}" data-mine-option="${count}">${count} mayın</button>`).join("")}
-        </div>
-        <div class="inline-modal-hint">Bahis şu an sabit: ${MINES_BASE_STAKE} coin</div>
-        <div class="inline-modal-actions">
-          <button type="button" class="btn btn-secondary" id="closeMinesSetupButton">İptal</button>
-          <button type="button" class="btn btn-primary" id="startMinesGameButton">Başlat</button>
-        </div>
+    <div class="mines-setup-popover" role="dialog" aria-modal="false" aria-label="Mines ayari">
+      <div class="mines-setup-title">Kaç mayın olsun?</div>
+      <div class="mine-option-row">
+        ${MINES_MINE_OPTIONS.map((count) => `<button type="button" class="mine-option ${state.preferredMineCount === count ? "is-active" : ""}" data-mine-option="${count}">${count}</button>`).join("")}
+      </div>
+      <div class="inline-modal-hint">Sabit oyun degeri: ${MINES_BASE_STAKE} coin</div>
+      <div class="mines-setup-actions">
+        <button type="button" class="btn btn-primary mines-setup-play" id="startMinesGameButton">Oyna</button>
       </div>
     </div>
   `;
@@ -1367,7 +1387,7 @@ function renderPlayingCard(messageId, card) {
 }
 
 function renderBlackjackActionButton(messageId, action, enabled, ownerCanPlay) {
-  const disabled = !enabled || !ownerCanPlay || Boolean(state.interactiveActionLocks[messageId]);
+  const disabled = state.isMessagesLoading || !enabled || !ownerCanPlay || Boolean(state.interactiveActionLocks[messageId]);
   const labels = {
     hit: "Hit",
     stand: "Stand",
@@ -1404,7 +1424,7 @@ async function handleBlackjackAction(messageId, action) {
 }
 
 function findActiveBlackjackMessageForCurrentUser() {
-  const messages = Object.values(state.messagesByChannel).flat();
+  const messages = getVisibleMessagesForChannel(selectedChannel()?.id);
   return messages.find((message) => {
     if (message?.type !== "blackjack") return false;
     const game = normalizeBlackjackState(message.content);
@@ -1415,7 +1435,7 @@ function findActiveBlackjackMessageForCurrentUser() {
 function renderMinesMessage(message) {
   const game = normalizeMinesState(message.content);
   const ownerCanPlay = game.ownerId === state.currentUser.id;
-  const disabled = game.status !== "playing" || !ownerCanPlay;
+  const disabled = state.isMessagesLoading || game.status !== "playing" || !ownerCanPlay || Boolean(state.interactiveActionLocks[message.id]);
   const tone = getMinesResultTone(game.status);
   const title = renderMinesTitle(game);
   const stats = getMinesStats(game);
@@ -1430,6 +1450,10 @@ function renderMinesMessage(message) {
         ${game.cells.map((cell, index) => renderMinesCell(message.id, cell, index, disabled)).join("")}
       </div>
       <div class="mines-footer">
+        <div class="mines-stat">
+          <span class="mines-label">Mayin</span>
+          <strong>${escapeHtml(String(game.mineCount))}</strong>
+        </div>
         <div class="mines-stat">
           <span class="mines-label">Collectable</span>
           <strong>${escapeHtml(formatCoinValue(stats.collectable))}</strong>
@@ -1461,6 +1485,7 @@ function renderMinesCell(messageId, cell, index, disabled) {
 async function handleMinesReveal(messageId, cellIndex) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
+  if (state.isMessagesLoading || state.interactiveActionLocks[messageId]) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing") return;
@@ -1474,6 +1499,7 @@ async function handleMinesReveal(messageId, cellIndex) {
 async function handleMinesCollect(messageId) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
+  if (state.isMessagesLoading || state.interactiveActionLocks[messageId]) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing" || game.revealedSafeCount === 0) return;
@@ -1489,6 +1515,7 @@ async function persistInteractiveGameUpdate(message, nextContent) {
   };
 
   state.remoteSyncEpoch += 1;
+  state.interactiveActionLocks[message.id] = true;
   state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
   const previousQueue = interactivePersistQueues[message.id] || Promise.resolve();
@@ -1502,6 +1529,7 @@ async function persistInteractiveGameUpdate(message, nextContent) {
     if (interactivePersistQueues[message.id] === nextQueue) {
       delete interactivePersistQueues[message.id];
     }
+    delete state.interactiveActionLocks[message.id];
   });
   void loadPersistedMessages();
 }
@@ -2142,6 +2170,20 @@ function hasMeaningfulMessageDifference(currentMessage, nextMessage) {
 
 function hasActiveBlackjackInteraction() {
   return Object.keys(state.interactiveActionLocks || {}).length > 0 || Object.keys(state.pendingUpdatedMessages || {}).length > 0;
+}
+
+function getVisibleMessagesForChannel(channelId) {
+  if (!channelId) return [];
+  return applyLocalMessageFilters(state.messagesByChannel[channelId] || [], channelId);
+}
+
+function findActiveMinesMessageForCurrentUser() {
+  const messages = getVisibleMessagesForChannel(selectedChannel()?.id);
+  return messages.find((message) => {
+    if (message?.type !== "mines") return false;
+    const game = normalizeMinesState(message.content);
+    return game.ownerId === state.currentUser.id && game.status === "playing";
+  }) || null;
 }
 
 function applyLocalMessageFilters(messages, channelId) {
