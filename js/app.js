@@ -30,6 +30,7 @@ const DEFAULT_MEMBERS = [
 const GAME_BUTTONS = [
   { id: "blackjack", label: "🃏 Blackjack", game: "blackjack" },
   { id: "mines", label: "💣 Mines", game: "mines" },
+  { id: "dragon", label: "🐉 Ejderha", game: "dragon" },
   { id: "dice", label: "🎲 Zar", game: "dice" },
   { id: "case", label: "🎁 Kasa", game: "case" }
 ];
@@ -45,6 +46,9 @@ const MINES_GRID_SIZE = 9;
 const MINES_MINE_COUNT = 2;
 const MINES_BASE_STAKE = 100;
 const MINES_MINE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8];
+const DRAGON_BASE_STAKE = 100;
+const DRAGON_TICK_MS = 200;
+const DRAGON_GROWTH_RATE = 0.31;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 
@@ -64,6 +68,7 @@ const state = {
   runtimeNote: MOCK_MODE ? "Tarayıcı önizleme modu" : "Discord Activity başlatılıyor...",
   scopeKey: "local-preview",
   messageSyncHandle: null,
+  dragonTickerHandle: null,
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
@@ -369,6 +374,7 @@ function startMessageSync() {
   }, 1000);
 
   document.addEventListener("visibilitychange", handleVisibilitySync);
+  startDragonTicker();
 }
 
 function stopMessageSync() {
@@ -378,6 +384,7 @@ function stopMessageSync() {
   }
 
   document.removeEventListener("visibilitychange", handleVisibilitySync);
+  stopDragonTicker();
 }
 
 function handleVisibilitySync() {
@@ -705,6 +712,14 @@ function bindRuntimeUi() {
       await handleMinesCollect(messageId);
     });
   });
+  app.querySelectorAll("[data-dragon-collect]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const messageId = button.dataset.messageId;
+      if (!messageId) return;
+      await handleDragonCollect(messageId);
+    });
+  });
 
   const form = document.getElementById("composerForm");
   const input = document.getElementById("composerInput");
@@ -879,6 +894,20 @@ async function sendGameMessage(game, label) {
     const message = makeMessage({
       type: "mines",
       content: createMinesGameState(state.preferredMineCount)
+    });
+    appendLocalMessage(message);
+    await persistMessage(message);
+    return;
+  }
+
+  if (game === "dragon") {
+    if (findActiveDragonMessageForCurrentUser()) {
+      showToast("Önce aktif ejderha oyununu bitir.");
+      return;
+    }
+    const message = makeMessage({
+      type: "dragon",
+      content: createDragonGameState()
     });
     appendLocalMessage(message);
     await persistMessage(message);
@@ -1298,6 +1327,9 @@ function renderMessageContent(message) {
   if (message.type === "mines") {
     return renderMinesMessage(message);
   }
+  if (message.type === "dragon") {
+    return renderDragonMessage(message);
+  }
 
   return `<div class="message-text">${highlightMultilineText(message.content, state.searchQuery)}</div>`;
 }
@@ -1468,6 +1500,45 @@ function renderMinesMessage(message) {
   `;
 }
 
+function renderDragonMessage(message) {
+  const game = normalizeDragonState(message.content);
+  const ownerCanPlay = game.ownerId === state.currentUser.id;
+  const isPlaying = game.status === "playing";
+  const crashNow = isPlaying && shouldDragonCrash(game);
+  const multiplier = isPlaying && !crashNow ? getDragonLiveMultiplier(game) : roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
+  const collectible = isPlaying && !crashNow ? roundCoinValue(game.baseStake * multiplier) : game.collectible;
+  const disabled = state.isMessagesLoading || !ownerCanPlay || !isPlaying || crashNow || Boolean(state.interactiveActionLocks[message.id]);
+  const tone = game.status === "cashed_out" ? "is-win" : (game.status === "crashed" || crashNow) ? "is-loss" : "";
+  const statusLabel = isPlaying && !crashNow ? "Ejderha ates ufleyerek ucuyor" : (game.resultSummary || "EJDERHA PATLADI 💥");
+
+  return `
+    <div class="dragon-card ${tone}">
+      <div class="dragon-header">
+        <div>
+          <div class="dragon-title">Ejderha</div>
+          <div class="dragon-status">${escapeHtml(statusLabel)}</div>
+        </div>
+        <div class="dragon-multiplier ${tone}">${escapeHtml(formatMultiplier(multiplier))}</div>
+      </div>
+      <div class="dragon-scene ${isPlaying && !crashNow ? "is-flying" : "is-ended"}">
+        <div class="dragon-emoji">${isPlaying && !crashNow ? "🐉" : game.status === "cashed_out" ? "👑" : "💥"}</div>
+        <div class="dragon-fire" aria-hidden="true"><span></span><span></span><span></span></div>
+      </div>
+      <div class="dragon-stats">
+        <div class="dragon-stat">
+          <span class="dragon-label">Deger</span>
+          <strong>${escapeHtml(formatCoinValue(game.baseStake))}</strong>
+        </div>
+        <div class="dragon-stat">
+          <span class="dragon-label">Cekilebilir</span>
+          <strong>${escapeHtml(formatCoinValue(collectible))}</strong>
+        </div>
+        <button type="button" class="btn dragon-collect ${tone}" data-dragon-collect data-message-id="${escapeAttr(message.id)}" ${disabled ? "disabled" : ""}>Cek</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderMinesPills(game) {
   const nextMultipliers = getNextMinesMultipliers(game).slice(0, 5);
   return nextMultipliers.map((value, index) => `<span class="mines-pill ${index === 0 ? "is-current" : ""}">${escapeHtml(formatMultiplier(value))}</span>`).join("");
@@ -1508,6 +1579,23 @@ async function handleMinesCollect(messageId) {
 
   const nextGame = collectMinesWinnings(game);
   await persistInteractiveGameUpdate(message, nextGame);
+}
+
+async function handleDragonCollect(messageId) {
+  const message = findMessageById(messageId);
+  if (!message || message.type !== "dragon") return;
+  if (state.isMessagesLoading || state.interactiveActionLocks[messageId]) return;
+
+  const game = normalizeDragonState(message.content);
+  if (game.ownerId !== state.currentUser.id || game.status !== "playing") return;
+
+  state.interactiveActionLocks[messageId] = true;
+  try {
+    const nextGame = shouldDragonCrash(game) ? crashDragonGame(game) : collectDragonWinnings(game);
+    await persistInteractiveGameUpdate(message, nextGame);
+  } finally {
+    delete state.interactiveActionLocks[messageId];
+  }
 }
 
 async function persistInteractiveGameUpdate(message, nextContent) {
@@ -1624,6 +1712,59 @@ function collectMinesWinnings(gameState) {
   game.status = "cashed_out";
   game.resultSummary = "KAZANDIN 👑";
   revealAllMines(game.cells);
+  return game;
+}
+
+function createDragonGameState() {
+  return normalizeDragonState({
+    game: "dragon",
+    ownerId: state.currentUser.id,
+    ownerName: state.currentUser.displayName,
+    revision: 1,
+    status: "playing",
+    baseStake: DRAGON_BASE_STAKE,
+    startedAtMs: Date.now(),
+    crashAtMultiplier: generateDragonCrashMultiplier(),
+    finalMultiplier: 1,
+    collectible: DRAGON_BASE_STAKE,
+    resultSummary: ""
+  });
+}
+
+function normalizeDragonState(content) {
+  const game = typeof content === "string" ? JSON.parse(content) : cloneData(content);
+  game.game ||= "dragon";
+  game.ownerId ||= state.currentUser.id;
+  game.ownerName ||= state.currentUser.displayName;
+  game.revision = Number(game.revision) > 0 ? Number(game.revision) : 1;
+  game.status ||= "playing";
+  game.baseStake = Number(game.baseStake) > 0 ? Number(game.baseStake) : DRAGON_BASE_STAKE;
+  game.startedAtMs = Number(game.startedAtMs) > 0 ? Number(game.startedAtMs) : Date.now();
+  game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier();
+  game.finalMultiplier = Number(game.finalMultiplier) > 0 ? Number(game.finalMultiplier) : 1;
+  game.collectible = Number(game.collectible) >= 0 ? Number(game.collectible) : game.baseStake;
+  game.resultSummary ||= "";
+  return game;
+}
+
+function collectDragonWinnings(gameState) {
+  const game = normalizeDragonState(gameState);
+  const multiplier = getDragonLiveMultiplier(game);
+  game.revision += 1;
+  game.status = "cashed_out";
+  game.finalMultiplier = multiplier;
+  game.collectible = roundCoinValue(game.baseStake * multiplier);
+  game.resultSummary = "KAZANDIN 👑";
+  return game;
+}
+
+function crashDragonGame(gameState) {
+  const game = normalizeDragonState(gameState);
+  game.revision += 1;
+  game.status = "crashed";
+  game.finalMultiplier = roundMultiplier(game.crashAtMultiplier);
+  game.collectible = 0;
+  game.resultSummary = "EJDERHA PATLADI 💥";
   return game;
 }
 
@@ -2211,6 +2352,15 @@ function findActiveMinesMessageForCurrentUser() {
   }) || null;
 }
 
+function findActiveDragonMessageForCurrentUser() {
+  const messages = getVisibleMessagesForChannel(selectedChannel()?.id);
+  return messages.find((message) => {
+    if (message?.type !== "dragon") return false;
+    const game = normalizeDragonState(message.content);
+    return game.ownerId === state.currentUser.id && game.status === "playing";
+  }) || null;
+}
+
 function applyLocalMessageFilters(messages, channelId) {
   const clearedAt = getLocalClearTimestamp(state.scopeKey, channelId);
   if (!clearedAt) return messages;
@@ -2289,6 +2439,66 @@ function normalizeMessageTimestamp(message) {
   return 0;
 }
 
+function getDragonLiveMultiplier(gameState, now = Date.now()) {
+  const game = normalizeDragonState(gameState);
+  if (game.status !== "playing") {
+    return roundMultiplier(game.finalMultiplier || 1);
+  }
+
+  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
+  const multiplier = Math.exp(DRAGON_GROWTH_RATE * elapsedSeconds);
+  return roundMultiplier(Math.min(game.crashAtMultiplier, multiplier));
+}
+
+function shouldDragonCrash(gameState, now = Date.now()) {
+  const game = normalizeDragonState(gameState);
+  if (game.status !== "playing") return false;
+  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
+  return Math.exp(DRAGON_GROWTH_RATE * elapsedSeconds) >= game.crashAtMultiplier;
+}
+
+function generateDragonCrashMultiplier() {
+  const raw = 0.99 / Math.max(0.04, 1 - Math.random());
+  return roundMultiplier(Math.max(1.15, Math.min(25, raw)));
+}
+
+function roundMultiplier(value) {
+  return Math.round(Number(value || 1) * 100) / 100;
+}
+
+function startDragonTicker() {
+  stopDragonTicker();
+  state.dragonTickerHandle = window.setInterval(() => {
+    const messages = getVisibleMessagesForChannel(selectedChannel()?.id).filter((message) => message?.type === "dragon");
+    if (!messages.length) return;
+
+    let shouldRender = false;
+    for (const message of messages) {
+      const game = normalizeDragonState(message.content);
+      if (game.status !== "playing") continue;
+      shouldRender = true;
+      if (state.interactiveActionLocks[message.id] || state.pendingUpdatedMessages[message.id]) continue;
+      if (!shouldDragonCrash(game)) continue;
+
+      state.interactiveActionLocks[message.id] = true;
+      void persistInteractiveGameUpdate(message, crashDragonGame(game))
+        .finally(() => {
+          delete state.interactiveActionLocks[message.id];
+        });
+    }
+
+    if (shouldRender) {
+      render();
+    }
+  }, DRAGON_TICK_MS);
+}
+
+function stopDragonTicker() {
+  if (!state.dragonTickerHandle) return;
+  window.clearInterval(state.dragonTickerHandle);
+  state.dragonTickerHandle = null;
+}
+
 function getSearchableMessageText(message) {
   if (message.type === "blackjack") {
     const game = normalizeBlackjackState(message.content);
@@ -2308,6 +2518,17 @@ function getSearchableMessageText(message) {
       game.resultSummary,
       formatCoinValue(game.collectible),
       formatMultiplier(game.multiplier)
+    ].join(" ");
+  }
+
+  if (message.type === "dragon") {
+    const game = normalizeDragonState(message.content);
+    return [
+      "ejderha",
+      game.ownerName,
+      game.resultSummary,
+      formatCoinValue(game.collectible),
+      formatMultiplier(game.finalMultiplier || getDragonLiveMultiplier(game))
     ].join(" ");
   }
 
