@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import express from "express";
+import dragonHandler from "../api/dragon.js";
 import { appendMessage, listScopeChannels, updateMessage } from "./storage.js";
 
 dotenv.config();
@@ -102,6 +103,10 @@ app.post("/api/token", async (req, res) => {
       details: error instanceof Error ? error.message : String(error)
     });
   }
+});
+
+app.all("/api/dragon", async (req, res) => {
+  await dragonHandler(req, res);
 });
 
 app.listen(port, () => {

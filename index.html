@@ -8,6 +8,7 @@
     name="description"
     content="This web application offers a user-friendly chat interface with customizable menus and an admin panel, enhancing communication for communities and teams."
   >
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -44,7 +45,7 @@
   </div>
 
   <div id="userBackdrop" class="modal-backdrop" aria-hidden="true">
-    <div class="modal user-modal" role="dialog" aria-modal="true" aria-labelledby="userTitle">
+    <div class="modal user-modal user-modal-wide" role="dialog" aria-modal="true" aria-labelledby="userTitle">
       <div class="modal-header">
         <div>
           <h2 id="userTitle" class="modal-title">Kullanici Menusu</h2>
@@ -84,57 +85,95 @@
             <button type="button" class="config-game-tab" id="userConfigMines">Mines</button>
           </div>
           <section id="dragonConfigPanel" class="config-game-panel">
-            <div class="config-grid">
-              <label class="config-card">
-                <span class="field-label" for="dragonLobbyInput">Baslangic Bekleme Suresi (sn)</span>
-                <input id="dragonLobbyInput" class="field" type="number" min="1" step="1">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonSpeedInput">X Artis Hizi</span>
-                <input id="dragonSpeedInput" class="field" type="number" min="0.10" max="5" step="0.05">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonLuckyChanceInput">Sans Tetikleme (%)</span>
-                <input id="dragonLuckyChanceInput" class="field" type="number" min="0" max="100" step="1">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonLuckyCrashInput">Sansli Tur Patlama (1000'de)</span>
-                <input id="dragonLuckyCrashInput" class="field" type="number" min="1" max="999" step="1">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonLowCapInput">Ilk Esik X</span>
-                <input id="dragonLowCapInput" class="field" type="number" min="1.01" max="10" step="0.01">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonLowChanceInput">Ilk Bant Patlama (1000'de)</span>
-                <input id="dragonLowChanceInput" class="field" type="number" min="1" max="999" step="1">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonMidCapInput">Ikinci Esik X</span>
-                <input id="dragonMidCapInput" class="field" type="number" min="1.50" max="25" step="0.01">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonMidChanceInput">Ikinci Bant Patlama (1000'de)</span>
-                <input id="dragonMidChanceInput" class="field" type="number" min="1" max="999" step="1">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonHighCapInput">Ucuncu Esik X</span>
-                <input id="dragonHighCapInput" class="field" type="number" min="3.00" max="100" step="0.01">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonHighChanceInput">Ucuncu Bant Patlama (1000'de)</span>
-                <input id="dragonHighChanceInput" class="field" type="number" min="1" max="999" step="1">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonUltraChanceInput">Son Bant Patlama (1000'de)</span>
-                <input id="dragonUltraChanceInput" class="field" type="number" min="1" max="999" step="1">
-              </label>
-              <label class="config-card">
-                <span class="field-label" for="dragonTestCapInput">Test Modu Taban X</span>
-                <input id="dragonTestCapInput" class="field" type="number" min="1.10" max="10" step="0.10">
-              </label>
-            </div>
-            <div class="row">
+            <section class="config-section">
+              <div class="config-section-header">
+                <div>
+                  <h3 class="config-section-title">Tur Akisi</h3>
+                  <p class="config-section-copy">Yeni turun bekleme ve x artis hizini buradan ayarlarsin.</p>
+                </div>
+              </div>
+              <div class="config-grid">
+                <label class="config-card">
+                  <span class="field-label" for="dragonLobbyInput">Baslangic Bekleme Suresi (sn)</span>
+                  <input id="dragonLobbyInput" class="field" type="number" min="1" step="1">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonSpeedInput">X Artis Hizi</span>
+                  <input id="dragonSpeedInput" class="field" type="number" min="0.10" max="5" step="0.05">
+                </label>
+              </div>
+            </section>
+            <section class="config-section">
+              <div class="config-section-header">
+                <div>
+                  <h3 class="config-section-title">Sansli Tur</h3>
+                  <p class="config-section-copy">Tutarsa tum tur 0.01x adimlarda tek oranla ilerler.</p>
+                </div>
+              </div>
+              <div class="config-grid">
+                <label class="config-card">
+                  <span class="field-label" for="dragonLuckyChanceInput">Sans Tetikleme (%)</span>
+                  <input id="dragonLuckyChanceInput" class="field" type="number" min="0" max="100" step="1">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonLuckyCrashInput">Sansli Tur Patlama (1000'de)</span>
+                  <input id="dragonLuckyCrashInput" class="field" type="number" min="1" max="999" step="1">
+                </label>
+              </div>
+            </section>
+            <section class="config-section">
+              <div class="config-section-header">
+                <div>
+                  <h3 class="config-section-title">Normal Dagilim</h3>
+                  <p class="config-section-copy">Bant sirasi: ilk esige kadar, ilk-ikinci, ikinci-ucuncu ve ucuncu+.</p>
+                </div>
+              </div>
+              <div class="config-grid config-grid-bands">
+                <label class="config-card">
+                  <span class="field-label" for="dragonLowCapInput">Ilk Esik X</span>
+                  <input id="dragonLowCapInput" class="field" type="number" min="1.01" max="10" step="0.01">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonLowChanceInput">Ilk Bant Patlama (1000'de)</span>
+                  <input id="dragonLowChanceInput" class="field" type="number" min="1" max="999" step="1">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonMidCapInput">Ikinci Esik X</span>
+                  <input id="dragonMidCapInput" class="field" type="number" min="1.50" max="25" step="0.01">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonMidChanceInput">Ikinci Bant Patlama (1000'de)</span>
+                  <input id="dragonMidChanceInput" class="field" type="number" min="1" max="999" step="1">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonHighCapInput">Ucuncu Esik X</span>
+                  <input id="dragonHighCapInput" class="field" type="number" min="3.00" max="100" step="0.01">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonHighChanceInput">Ucuncu Bant Patlama (1000'de)</span>
+                  <input id="dragonHighChanceInput" class="field" type="number" min="1" max="999" step="1">
+                </label>
+                <label class="config-card">
+                  <span class="field-label" for="dragonUltraChanceInput">Son Bant Patlama (1000'de)</span>
+                  <input id="dragonUltraChanceInput" class="field" type="number" min="1" max="999" step="1">
+                </label>
+              </div>
+            </section>
+            <section class="config-section">
+              <div class="config-section-header">
+                <div>
+                  <h3 class="config-section-title">Test Modu</h3>
+                  <p class="config-section-copy">Aciksa sadece yeni turlarda taban x uzerinden test dagilimi kullanilir.</p>
+                </div>
+              </div>
+              <div class="config-grid">
+                <label class="config-card">
+                  <span class="field-label" for="dragonTestCapInput">Test Modu Taban X</span>
+                  <input id="dragonTestCapInput" class="field" type="number" min="1.10" max="10" step="0.10">
+                </label>
+              </div>
+            </section>
+            <div class="row config-actions">
               <button type="button" class="btn btn-secondary grow" id="dragonTestToggleButton">Test Kapali</button>
               <button type="button" class="btn btn-primary grow" id="dragonSaveButton">Kaydet</button>
             </div>
@@ -143,13 +182,15 @@
             </div>
           </section>
           <section id="blackjackConfigPanel" class="config-game-panel" hidden>
-            <div class="hint">
-              <strong>Blackjack:</strong> Burasi sonraki turda masa kurallari icin kullanilacak.
+            <div class="config-placeholder">
+              <strong>Blackjack</strong>
+              <span>Burasi sonraki turda masa kurallari ve bahis limitleri icin kullanilacak.</span>
             </div>
           </section>
           <section id="minesConfigPanel" class="config-game-panel" hidden>
-            <div class="hint">
-              <strong>Mines:</strong> Burasi sonraki turda oran ve mayin kurallari icin kullanilacak.
+            <div class="config-placeholder">
+              <strong>Mines</strong>
+              <span>Burasi sonraki turda oran, mayin sayisi ve oyun limitleri icin kullanilacak.</span>
             </div>
           </section>
         </section>

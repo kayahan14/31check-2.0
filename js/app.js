@@ -167,6 +167,7 @@ const userModalTag = document.getElementById("userModalTag");
 const adminBadge = document.getElementById("adminBadge");
 const tabs = [...document.querySelectorAll(".tab")];
 let toastTimeoutHandle = 0;
+let userBackdropClickArmed = false;
 const interactivePersistQueues = {};
 
 bootstrap();
@@ -352,8 +353,20 @@ function bindStaticEvents() {
   adminBackdrop.addEventListener("click", (event) => {
     if (event.target === adminBackdrop) closeAdminModal();
   });
+  const userModalRoot = userBackdrop.querySelector(".modal");
+  if (userModalRoot) {
+    userModalRoot.addEventListener("pointerdown", () => {
+      userBackdropClickArmed = false;
+    });
+  }
+  userBackdrop.addEventListener("pointerdown", (event) => {
+    userBackdropClickArmed = event.target === userBackdrop;
+  });
   userBackdrop.addEventListener("click", (event) => {
-    if (event.target === userBackdrop) closeUserModal();
+    if (event.target === userBackdrop && userBackdropClickArmed) {
+      closeUserModal();
+    }
+    userBackdropClickArmed = false;
   });
 
   document.getElementById("channelForm").addEventListener("submit", addChannel);
@@ -668,7 +681,7 @@ function render() {
   const messages = filterMessages(rawMessages, state.searchQuery);
   const composerDisabled = state.isMessagesLoading;
 
-  app.className = `app ${state.sidebarCollapsed ? "sidebar-collapsed" : ""}`.trim();
+  app.className = `app ${state.sidebarCollapsed ? "sidebar-collapsed" : ""} ${isDragonView ? "is-dragon-view" : ""}`.trim();
   app.innerHTML = `
     <aside class="sidebar">
       <div class="sidebar-top">
@@ -693,7 +706,11 @@ function render() {
     </aside>
     <main class="main">
       <div class="main-panel">
-        ${isDragonView ? renderDragonRealtimeView() : `
+        ${isDragonView ? `
+        ${renderDragonRealtimeView()}
+        <aside class="members">
+          <div class="members-scroll">${renderMembers()}</div>
+        </aside>` : `
         <section class="chat">
           <header class="chat-header">
             <div class="chat-header-left">
@@ -2322,9 +2339,8 @@ function startDragonSessionSync() {
 
   state.dragonSessionSyncHandle = window.setInterval(() => {
     if (!state.dragonSession && !isCasinoDragonView()) return;
-    if (state.dragonRealtimeReady) return;
     void loadDragonSession();
-  }, 8000);
+  }, 1000);
 }
 
 function stopDragonSessionSync() {
