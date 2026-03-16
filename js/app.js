@@ -3230,9 +3230,13 @@ function getDragonDisplayMultiplier(gameState, phase = getDragonPhase(gameState)
     return getDragonLiveMultiplier(game);
   }
   if (phase === "finished") {
-    return roundMultiplier(game.status === "crashed"
-      ? (game.crashAtMultiplier || game.finalMultiplier || 1)
-      : (game.finalMultiplier || game.crashAtMultiplier || 1));
+    if (game.status === "crashed") {
+      return roundMultiplier(game.crashAtMultiplier || game.finalMultiplier || 1);
+    }
+    if (Number(game.finalMultiplier) > 1) {
+      return roundMultiplier(game.finalMultiplier);
+    }
+    return roundMultiplier(game.crashAtMultiplier || 1);
   }
   return roundMultiplier(game.finalMultiplier > 1 ? game.finalMultiplier : 1);
 }
@@ -3374,6 +3378,14 @@ function syncDragonModalLoop() {
           ? roundCoinValue(game.baseStake * getDragonLiveMultiplier(game))
           : 0;
       collectibleNode.textContent = formatCoinValue(collectible);
+    }
+    if (
+      isDedicatedDragonView
+      && phase === "finished"
+      && game.status !== "crashed"
+      && !state.interactiveActionLocks[DRAGON_CHANNEL_ID]
+    ) {
+      void handleDragonHubAction("resolve");
     }
     if (
       isDedicatedDragonView
