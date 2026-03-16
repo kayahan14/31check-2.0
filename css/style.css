@@ -1053,20 +1053,25 @@ svg { display: block; }
 .dragon-hub-scene {
   min-height: 360px;
   background:
-    radial-gradient(circle at 58% 50%, rgba(255, 173, 78, 0.2), transparent 18%),
-    radial-gradient(circle at 30% 48%, rgba(255, 112, 57, 0.14), transparent 28%),
+    radial-gradient(circle at 42% 50%, rgba(255, 173, 78, 0.24), transparent 18%),
+    radial-gradient(circle at 70% 48%, rgba(255, 112, 57, 0.14), transparent 28%),
     linear-gradient(180deg, rgba(79, 36, 117, 0.62), rgba(35, 22, 54, 0.95));
 }
 .dragon-hub-scene .dragon-hub-dragon {
-  left: 14%;
+  left: auto;
+  right: 12%;
   font-size: 110px;
   z-index: 2;
+  transform: translateY(-50%) scaleX(-1);
+  animation: dragonFloat 3.2s ease-in-out infinite;
 }
 .dragon-hub-scene .dragon-modal-fire {
-  left: 28%;
+  left: auto;
+  right: 28%;
   top: 50%;
   gap: 10px;
   z-index: 1;
+  transform: translateY(-50%) scaleX(-1);
 }
 .dragon-hub-scene .dragon-modal-fire span {
   width: 90px;
@@ -1078,7 +1083,7 @@ svg { display: block; }
 }
 .dragon-flame-meter {
   position: absolute;
-  left: 58%;
+  left: 42%;
   top: 50%;
   transform: translate(-50%, -50%);
   width: 180px;
@@ -1144,6 +1149,30 @@ svg { display: block; }
   color: var(--text-main);
   font-size: 15px;
   font-weight: 800;
+}
+.dragon-auto-step {
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  font-size: 20px;
+  font-weight: 900;
+}
+.dragon-auto-display {
+  min-width: 86px;
+  min-height: 42px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(11, 12, 18, 0.72);
+  color: #fff1b6;
+  font-size: 15px;
+  font-weight: 900;
 }
 .dragon-auto-toggle {
   min-width: 98px;
@@ -1485,6 +1514,28 @@ svg { display: block; }
 }
 .tab:hover { color: var(--text-main); }
 .modal-body { padding: 16px; }
+.user-menu-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.user-menu-tab {
+  flex: 1;
+  min-height: 38px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+.user-menu-tab.active {
+  background: rgba(88, 101, 242, 0.2);
+  color: #dfe4ff;
+  box-shadow: inset 0 0 0 1px rgba(120, 133, 255, 0.28);
+}
+.user-modal-section[hidden] {
+  display: none;
+}
 .panel { display: none; }
 .panel.active { display: block; }
 .stack-lg {
@@ -1589,15 +1640,16 @@ svg { display: block; }
     width: 100%;
   }
   .dragon-auto-input,
-  .dragon-auto-toggle {
+  .dragon-auto-toggle,
+  .dragon-auto-display {
     flex: 1;
   }
   .dragon-hub-scene .dragon-hub-dragon {
-    left: 10%;
+    right: 8%;
     font-size: 88px;
   }
   .dragon-hub-scene .dragon-modal-fire {
-    left: 24%;
+    right: 22%;
   }
   .dragon-hub-scene .dragon-modal-fire span {
     width: 64px;
@@ -1605,7 +1657,7 @@ svg { display: block; }
   .dragon-flame-meter {
     width: 140px;
     height: 140px;
-    left: 60%;
+    left: 38%;
   }
   .dragon-scene-multiplier {
     font-size: 32px;
@@ -1639,5 +1691,13 @@ svg { display: block; }
   50% {
     transform: scaleX(1.6);
     opacity: 0.92;
+  }
+}
+@keyframes dragonFloat {
+  0%, 100% {
+    transform: translateY(-50%) scaleX(-1) translateY(0);
+  }
+  50% {
+    transform: translateY(-50%) scaleX(-1) translateY(-8px);
   }
 }

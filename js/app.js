@@ -52,6 +52,12 @@ const MINES_BASE_STAKE = 100;
 const MINES_MINE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8];
 const DRAGON_BASE_STAKE = 100;
 const DRAGON_TICK_MS = 400;
+const DEFAULT_DRAGON_CONFIG = {
+  lobbyMs: 10000,
+  speedFactor: 1,
+  testMode: false,
+  testMaxMultiplier: 10
+};
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
@@ -81,6 +87,8 @@ const state = {
   dragonSession: null,
   dragonStateLoading: true,
   dragonSessionSyncHandle: null,
+  dragonConfig: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
+  dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
@@ -102,6 +110,7 @@ const state = {
   interactiveActionLocks: {},
   pendingUpdatedMessages: {},
   pendingMessagesByChannel: buildEmptyMessageState(),
+  userModalView: "categories",
   currentUser: {
     id: "local-user",
     username: "31check",
@@ -163,6 +172,46 @@ function bindStaticEvents() {
   document.getElementById("adminCloseFooter").addEventListener("click", closeAdminModal);
   document.getElementById("closeUser").addEventListener("click", closeUserModal);
   document.getElementById("userCloseFooter").addEventListener("click", closeUserModal);
+  document.getElementById("userViewCategories").addEventListener("click", () => {
+    state.userModalView = "categories";
+    renderUserModal();
+  });
+  document.getElementById("userViewDragon").addEventListener("click", () => {
+    state.userModalView = "dragon";
+    state.dragonConfigDraft = normalizeDragonConfig(state.dragonConfig);
+    renderUserModal();
+  });
+  document.getElementById("dragonLobbyInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      lobbyMs: Number(event.currentTarget.value) * 1000
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonSpeedInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      speedFactor: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonTestCapInput").addEventListener("change", (event) => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      testMaxMultiplier: Number(event.currentTarget.value)
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonTestToggleButton").addEventListener("click", () => {
+    state.dragonConfigDraft = normalizeDragonConfig({
+      ...state.dragonConfigDraft,
+      testMode: !state.dragonConfigDraft.testMode
+    });
+    renderUserModal();
+  });
+  document.getElementById("dragonSaveButton").addEventListener("click", () => {
+    void saveDragonConfig();
+  });
 
   adminBackdrop.addEventListener("click", (event) => {
     if (event.target === adminBackdrop) closeAdminModal();
@@ -769,18 +818,15 @@ function bindRuntimeUi() {
       await handleDragonHubAction(action);
     });
   });
-  const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
-  if (dragonAutoInput) {
-    const syncDragonAutoTarget = () => {
-      const nextTarget = normalizeDragonAutoCashoutTarget(dragonAutoInput.value);
-      state.dragonAutoCashoutTarget = nextTarget;
-      dragonAutoInput.value = nextTarget.toFixed(2);
+  app.querySelectorAll("[data-dragon-auto-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const delta = Number(button.dataset.dragonAutoStep);
+      if (!Number.isFinite(delta)) return;
+      state.dragonAutoCashoutTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget + delta);
       saveDragonAutoCashoutPreference();
       render();
-    };
-    dragonAutoInput.addEventListener("change", syncDragonAutoTarget);
-    dragonAutoInput.addEventListener("blur", syncDragonAutoTarget);
-  }
+    });
+  });
   const dragonAutoToggle = document.getElementById("dragonAutoCashoutToggle");
   if (dragonAutoToggle) {
     dragonAutoToggle.addEventListener("click", () => {
@@ -914,6 +960,22 @@ function bindAdmin() {
 
 function renderUserModal() {
   adminBadge.hidden = !state.currentUser.isAdmin;
+  const categoriesTab = document.getElementById("userViewCategories");
+  const dragonTab = document.getElementById("userViewDragon");
+  const categoriesPanel = document.getElementById("userCategoriesPanel");
+  const dragonPanel = document.getElementById("userDragonPanel");
+  const dragonLobbyInput = document.getElementById("dragonLobbyInput");
+  const dragonSpeedInput = document.getElementById("dragonSpeedInput");
+  const dragonTestCapInput = document.getElementById("dragonTestCapInput");
+  const dragonTestToggleButton = document.getElementById("dragonTestToggleButton");
+
+  const isDragonView = state.currentUser.isAdmin && state.userModalView === "dragon";
+  categoriesTab.classList.toggle("active", !isDragonView);
+  dragonTab.classList.toggle("active", isDragonView);
+  dragonTab.hidden = !state.currentUser.isAdmin;
+  categoriesPanel.hidden = isDragonView;
+  dragonPanel.hidden = !isDragonView;
+
   categoryList.innerHTML = state.categories.length
     ? state.categories.map((category) => `
           <div class="item">
@@ -930,6 +992,21 @@ function renderUserModal() {
     renderAdmin();
     renderUserModal();
   }));
+
+  if (dragonLobbyInput) {
+    dragonLobbyInput.value = String(Math.round(state.dragonConfigDraft.lobbyMs / 1000));
+  }
+  if (dragonSpeedInput) {
+    dragonSpeedInput.value = state.dragonConfigDraft.speedFactor.toFixed(2);
+  }
+  if (dragonTestCapInput) {
+    dragonTestCapInput.value = state.dragonConfigDraft.testMaxMultiplier.toFixed(2);
+  }
+  if (dragonTestToggleButton) {
+    dragonTestToggleButton.textContent = state.dragonConfigDraft.testMode ? "Test Acik" : "Test Kapali";
+    dragonTestToggleButton.classList.toggle("btn-primary", state.dragonConfigDraft.testMode);
+    dragonTestToggleButton.classList.toggle("btn-secondary", !state.dragonConfigDraft.testMode);
+  }
 }
 
 function addChannel(event) {
@@ -1739,7 +1816,9 @@ function renderDragonRealtimeView() {
             <strong>${escapeHtml(formatMultiplier(autoTarget))}</strong>
           </div>
           <div class="dragon-auto-controls">
-            <input id="dragonAutoCashoutInput" class="dragon-auto-input" type="number" min="1.01" step="0.01" value="${escapeAttr(autoTarget.toFixed(2))}">
+            <button type="button" class="btn dragon-auto-step" data-dragon-auto-step="-0.25">-</button>
+            <div class="dragon-auto-display">${escapeHtml(formatMultiplier(autoTarget))}</div>
+            <button type="button" class="btn dragon-auto-step" data-dragon-auto-step="0.25">+</button>
             <button type="button" class="btn dragon-auto-toggle ${state.dragonAutoCashoutEnabled ? "is-active" : ""}" id="dragonAutoCashoutToggle">${state.dragonAutoCashoutEnabled ? "Acik" : "Kapali"}</button>
           </div>
         </div>
@@ -1911,16 +1990,21 @@ async function performDragonAction(messageId, actionType) {
   return payload?.message || null;
 }
 
-async function handleDragonHubAction(action) {
+async function handleDragonHubAction(action, options = {}) {
   if (state.interactiveActionLocks[DRAGON_CHANNEL_ID]) return;
   state.interactiveActionLocks[DRAGON_CHANNEL_ID] = true;
   try {
+    const clientMultiplier = action === "cashout" && state.dragonSession
+      ? getDragonLiveMultiplier(state.dragonSession.content)
+      : null;
     const response = await fetch("/api/dragon", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         scopeKey: state.scopeKey,
         action,
+        config: options.config,
+        clientMultiplier,
         actor: {
           id: state.currentUser.id,
           name: state.currentUser.displayName
@@ -1932,6 +2016,7 @@ async function handleDragonHubAction(action) {
     }
     const payload = await response.json();
     state.dragonSession = payload.session || null;
+    syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
     render();
   } catch (error) {
     console.warn("Dragon hub action failed.", error);
@@ -1953,11 +2038,45 @@ async function loadDragonSession({ initial = false } = {}) {
     if (!response.ok) return;
     const payload = await response.json();
     state.dragonSession = payload.session || null;
+    syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
   } catch (error) {
     console.warn("Dragon session load failed.", error);
   } finally {
     state.dragonStateLoading = false;
     if (isCasinoDragonView()) render();
+  }
+}
+
+async function saveDragonConfig() {
+  if (!state.currentUser.isAdmin || state.interactiveActionLocks["dragon-config"]) return;
+  state.interactiveActionLocks["dragon-config"] = true;
+  try {
+    const config = normalizeDragonConfig(state.dragonConfigDraft);
+    const response = await fetch("/api/dragon", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scopeKey: state.scopeKey,
+        action: "save_config",
+        config,
+        actor: {
+          id: state.currentUser.id,
+          name: state.currentUser.displayName
+        }
+      })
+    });
+    if (!response.ok) {
+      throw new Error("Dragon config save failed.");
+    }
+    const payload = await response.json();
+    syncDragonConfigFromServer(payload.config || config, { overwriteDraft: true });
+    showToast("Ejderha ayarlari kaydedildi.");
+    render();
+  } catch (error) {
+    console.warn("Dragon config save failed.", error);
+    showToast("Ejderha ayarlari kaydedilemedi.");
+  } finally {
+    delete state.interactiveActionLocks["dragon-config"];
   }
 }
 
@@ -2129,6 +2248,7 @@ function collectMinesWinnings(gameState) {
 }
 
 function createDragonGameState() {
+  const config = normalizeDragonConfig(state.dragonConfig);
   return normalizeDragonState({
     game: "dragon",
     ownerId: state.currentUser.id,
@@ -2136,9 +2256,10 @@ function createDragonGameState() {
     revision: 1,
     status: "lobby",
     baseStake: DRAGON_BASE_STAKE,
-    launchAtMs: Date.now() + 5000,
-    startedAtMs: Date.now() + 5000,
-    crashAtMultiplier: generateDragonCrashMultiplier(),
+    config,
+    launchAtMs: Date.now() + config.lobbyMs,
+    startedAtMs: Date.now() + config.lobbyMs,
+    crashAtMultiplier: generateDragonCrashMultiplier(config),
     finalMultiplier: 1,
     collectible: 0,
     resultSummary: "",
@@ -2162,9 +2283,10 @@ function normalizeDragonState(content) {
   game.revision = Number(game.revision) > 0 ? Number(game.revision) : 1;
   game.status ||= "lobby";
   game.baseStake = Number(game.baseStake) > 0 ? Number(game.baseStake) : DRAGON_BASE_STAKE;
-  game.launchAtMs = Number(game.launchAtMs) > 0 ? Number(game.launchAtMs) : Date.now() + 5000;
-  game.startedAtMs = Number(game.startedAtMs) > 0 ? Number(game.startedAtMs) : Date.now();
-  game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier();
+  game.config = normalizeDragonConfig(game.config || state.dragonConfig);
+  game.launchAtMs = Number(game.launchAtMs) > 0 ? Number(game.launchAtMs) : Date.now() + game.config.lobbyMs;
+  game.startedAtMs = Number(game.startedAtMs) > 0 ? Number(game.startedAtMs) : game.launchAtMs;
+  game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier(game.config);
   game.finalMultiplier = Number(game.finalMultiplier) > 0 ? Number(game.finalMultiplier) : 1;
   game.collectible = Number(game.collectible) >= 0 ? Number(game.collectible) : game.baseStake;
   game.participants = Array.isArray(game.participants) ? game.participants.map((entry) => ({
@@ -2863,6 +2985,25 @@ function normalizeDragonAutoCashoutTarget(value) {
   return Math.min(25, Math.max(1.01, Math.round(numeric * 100) / 100));
 }
 
+function normalizeDragonConfig(config) {
+  const next = config || {};
+  return {
+    lobbyMs: Math.min(60000, Math.max(1000, Math.round(Number(next.lobbyMs ?? DEFAULT_DRAGON_CONFIG.lobbyMs)))),
+    speedFactor: Math.min(5, Math.max(0.1, Math.round(Number(next.speedFactor ?? DEFAULT_DRAGON_CONFIG.speedFactor) * 100) / 100)),
+    testMode: Boolean(next.testMode),
+    testMaxMultiplier: Math.min(100, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
+  };
+}
+
+function syncDragonConfigFromServer(config, { overwriteDraft = true } = {}) {
+  const normalized = normalizeDragonConfig(config);
+  state.dragonConfig = normalized;
+  if (overwriteDraft) {
+    state.dragonConfigDraft = normalizeDragonConfig(normalized);
+  }
+  renderUserModal();
+}
+
 function getLocalClearTimestamp(scopeKey, channelId) {
   if (!scopeKey || !channelId) return 0;
   try {
@@ -2914,7 +3055,8 @@ function getDragonLiveMultiplier(gameState, now = Date.now()) {
   }
 
   const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
-  const multiplier = 1 + (elapsedSeconds * 0.09) + (elapsedSeconds * elapsedSeconds * 0.03);
+  const effectiveElapsed = elapsedSeconds * game.config.speedFactor;
+  const multiplier = 1 + (effectiveElapsed * 0.09) + (effectiveElapsed * effectiveElapsed * 0.03);
   return roundMultiplier(Math.min(game.crashAtMultiplier, multiplier));
 }
 
@@ -2923,11 +3065,17 @@ function shouldDragonCrash(gameState, now = Date.now()) {
   if (game.status === "crashed" || now < game.launchAtMs) return false;
 
   const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
-  const multiplier = 1 + (elapsedSeconds * 0.09) + (elapsedSeconds * elapsedSeconds * 0.03);
+  const effectiveElapsed = elapsedSeconds * game.config.speedFactor;
+  const multiplier = 1 + (effectiveElapsed * 0.09) + (effectiveElapsed * effectiveElapsed * 0.03);
   return multiplier >= game.crashAtMultiplier;
 }
 
-function generateDragonCrashMultiplier() {
+function generateDragonCrashMultiplier(config = DEFAULT_DRAGON_CONFIG) {
+  const normalizedConfig = normalizeDragonConfig(config);
+  if (normalizedConfig.testMode) {
+    const range = Math.max(0.05, normalizedConfig.testMaxMultiplier - 1);
+    return roundMultiplier(1 + Math.random() * range);
+  }
   const raw = 0.99 / Math.max(0.04, 1 - Math.random());
   return roundMultiplier(Math.max(1.15, Math.min(25, raw)));
 }

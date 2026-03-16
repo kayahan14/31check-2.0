@@ -56,21 +56,48 @@
         <button type="button" id="closeUser" class="modal-close" aria-label="Kapat"></button>
       </div>
       <div class="modal-body">
-        <form id="categoryForm" class="stack-lg">
-          <label class="field-label" for="categoryName">Yeni Kategori Ekle</label>
-          <div class="row">
-            <input id="categoryName" name="categoryName" class="field grow" type="text" placeholder="Kategori adi">
-            <button type="submit" class="btn btn-primary" id="addCategoryButton"></button>
+        <div class="user-menu-switch">
+          <button type="button" class="user-menu-tab active" id="userViewCategories">Kategoriler</button>
+          <button type="button" class="user-menu-tab" id="userViewDragon">Ejderha</button>
+        </div>
+        <section id="userCategoriesPanel" class="user-modal-section">
+          <form id="categoryForm" class="stack-lg">
+            <label class="field-label" for="categoryName">Yeni Kategori Ekle</label>
+            <div class="row">
+              <input id="categoryName" name="categoryName" class="field grow" type="text" placeholder="Kategori adi">
+              <button type="submit" class="btn btn-primary" id="addCategoryButton"></button>
+            </div>
+          </form>
+          <div class="stack-lg">
+            <span class="field-label">Mevcut Kategoriler</span>
+            <div id="categoryList"></div>
           </div>
-        </form>
-        <div class="stack-lg">
-          <span class="field-label">Mevcut Kategoriler</span>
-          <div id="categoryList"></div>
-        </div>
-        <div class="hint">
-          <strong>Bilgi:</strong> Kategoriler, kanal listesinde kanallari organize etmenize yardimci olur.
-          Kategori eklediginizde, yeni kanallar olustururken bu kategorileri secebilirsiniz.
-        </div>
+          <div class="hint">
+            <strong>Bilgi:</strong> Kategoriler, kanal listesinde kanallari organize etmenize yardimci olur.
+            Kategori eklediginizde, yeni kanallar olustururken bu kategorileri secebilirsiniz.
+          </div>
+        </section>
+        <section id="userDragonPanel" class="user-modal-section" hidden>
+          <div class="stack-lg">
+            <label class="field-label" for="dragonLobbyInput">Baslangic Bekleme Suresi (sn)</label>
+            <input id="dragonLobbyInput" class="field" type="number" min="1" step="1">
+          </div>
+          <div class="stack-lg">
+            <label class="field-label" for="dragonSpeedInput">X Artis Hizi</label>
+            <input id="dragonSpeedInput" class="field" type="number" min="0.10" max="5" step="0.05">
+          </div>
+          <div class="stack-lg">
+            <label class="field-label" for="dragonTestCapInput">Test Modu Tavan X</label>
+            <input id="dragonTestCapInput" class="field" type="number" min="1.10" max="100" step="0.10">
+          </div>
+          <div class="row">
+            <button type="button" class="btn btn-secondary grow" id="dragonTestToggleButton">Test Kapali</button>
+            <button type="button" class="btn btn-primary grow" id="dragonSaveButton">Kaydet</button>
+          </div>
+          <div class="hint">
+            <strong>Ejderha Ayari:</strong> Buradaki ayarlar yeni tur baslarken kullanilir. Aktif turun davranisini degistirmez.
+          </div>
+        </section>
       </div>
       <div class="modal-footer">
         <button type="button" id="userCloseFooter" class="btn btn-secondary">Kapat</button>
