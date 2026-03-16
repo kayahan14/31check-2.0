@@ -44,6 +44,9 @@ const BLACKJACK_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J",
 const MINES_GRID_SIZE = 9;
 const MINES_MINE_COUNT = 2;
 const MINES_BASE_STAKE = 100;
+const MINES_MINE_OPTIONS = [1, 2, 3, 4];
+const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
+const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 
 const FALLBACK_MESSAGE = {
   id: uid(),
@@ -66,6 +69,8 @@ const state = {
   composerDraft: "",
   searchQuery: "",
   sidebarCollapsed: false,
+  minesSetupOpen: false,
+  preferredMineCount: loadPreferredMineCount(),
   toastMessage: "",
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
@@ -106,6 +111,7 @@ const userModalTag = document.getElementById("userModalTag");
 const adminBadge = document.getElementById("adminBadge");
 const tabs = [...document.querySelectorAll(".tab")];
 let toastTimeoutHandle = 0;
+const interactivePersistQueues = {};
 
 bootstrap();
 
@@ -444,7 +450,7 @@ function render() {
   const shouldRestoreSearchFocus = document.activeElement?.id === "messageSearchInput";
   const shouldStickToBottom = state.messagePanePinnedToBottom || state.forceScrollToBottom;
   const channel = selectedChannel();
-  const rawMessages = state.messagesByChannel[channel?.id] || [];
+  const rawMessages = applyLocalMessageFilters(state.messagesByChannel[channel?.id] || [], channel?.id);
   const messages = filterMessages(rawMessages, state.searchQuery);
   const composerDisabled = state.isMessagesLoading;
 
@@ -504,6 +510,7 @@ function render() {
         </aside>
       </div>
     </main>
+    ${renderMinesSetupModal()}
     ${renderToast()}
   `;
 
@@ -638,9 +645,32 @@ function bindRuntimeUi() {
       const gameId = button.dataset.gameId;
       const config = GAME_BUTTONS.find((item) => item.game === gameId);
       if (!config) return;
+      if (gameId === "mines") {
+        openMinesSetup();
+        return;
+      }
       await sendGameMessage(config.game, config.label);
     });
   });
+  app.querySelectorAll("[data-mine-option]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mineCount = Number(button.dataset.mineOption);
+      if (!MINES_MINE_OPTIONS.includes(mineCount)) return;
+      state.preferredMineCount = mineCount;
+      savePreferredMineCount(mineCount);
+      render();
+    });
+  });
+  const minesStartButton = document.getElementById("startMinesGameButton");
+  if (minesStartButton) {
+    minesStartButton.addEventListener("click", async () => {
+      await startConfiguredMinesGame();
+    });
+  }
+  const minesCancelButton = document.getElementById("closeMinesSetupButton");
+  if (minesCancelButton) {
+    minesCancelButton.addEventListener("click", closeMinesSetup);
+  }
   app.querySelectorAll("[data-bj-action]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
@@ -713,6 +743,12 @@ function bindRuntimeUi() {
     event.preventDefault();
     const value = input.value.trim();
     if (!value) return;
+    if (isClearChatCommand(value)) {
+      state.composerDraft = "";
+      input.value = "";
+      clearCurrentChannelLocally();
+      return;
+    }
     input.value = "";
     state.composerDraft = "";
     state.keepComposerFocus = true;
@@ -830,7 +866,7 @@ async function sendGameMessage(game, label) {
   if (game === "mines") {
     const message = makeMessage({
       type: "mines",
-      content: createMinesGameState()
+      content: createMinesGameState(state.preferredMineCount)
     });
     appendLocalMessage(message);
     await persistMessage(message);
@@ -840,6 +876,22 @@ async function sendGameMessage(game, label) {
   const message = makeMessage({ type: "game", content: buildGameMessage(game, label) });
   appendLocalMessage(message);
   await persistMessage(message);
+}
+
+function openMinesSetup() {
+  state.minesSetupOpen = true;
+  render();
+}
+
+function closeMinesSetup() {
+  state.minesSetupOpen = false;
+  render();
+}
+
+async function startConfiguredMinesGame() {
+  state.minesSetupOpen = false;
+  render();
+  await sendGameMessage("mines", "💣 Mines");
 }
 
 function appendLocalMessage(message) {
@@ -1120,6 +1172,27 @@ function renderScrollToBottomButton() {
   return `<button type="button" id="scrollToBottomButton" class="scroll-to-bottom ${hidden ? "" : "visible"}" aria-label="En alta git">${icon("chevron-down", 18)}</button>`;
 }
 
+function renderMinesSetupModal() {
+  if (!state.minesSetupOpen) return "";
+
+  return `
+    <div class="inline-overlay">
+      <div class="inline-modal">
+        <div class="inline-modal-title">Mines Ayarı</div>
+        <div class="inline-modal-subtitle">Kaç mayın olsun?</div>
+        <div class="mine-option-row">
+          ${MINES_MINE_OPTIONS.map((count) => `<button type="button" class="mine-option ${state.preferredMineCount === count ? "is-active" : ""}" data-mine-option="${count}">${count} mayın</button>`).join("")}
+        </div>
+        <div class="inline-modal-hint">Bahis şu an sabit: ${MINES_BASE_STAKE} coin</div>
+        <div class="inline-modal-actions">
+          <button type="button" class="btn btn-secondary" id="closeMinesSetupButton">İptal</button>
+          <button type="button" class="btn btn-primary" id="startMinesGameButton">Başlat</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function showToast(message) {
   state.toastMessage = message;
   render();
@@ -1342,7 +1415,7 @@ function findActiveBlackjackMessageForCurrentUser() {
 function renderMinesMessage(message) {
   const game = normalizeMinesState(message.content);
   const ownerCanPlay = game.ownerId === state.currentUser.id;
-  const disabled = game.status !== "playing" || !ownerCanPlay || Boolean(state.interactiveActionLocks[message.id]);
+  const disabled = game.status !== "playing" || !ownerCanPlay;
   const tone = getMinesResultTone(game.status);
   const title = renderMinesTitle(game);
   const stats = getMinesStats(game);
@@ -1388,7 +1461,6 @@ function renderMinesCell(messageId, cell, index, disabled) {
 async function handleMinesReveal(messageId, cellIndex) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
-  if (state.interactiveActionLocks[messageId]) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing") return;
@@ -1402,7 +1474,6 @@ async function handleMinesReveal(messageId, cellIndex) {
 async function handleMinesCollect(messageId) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
-  if (state.interactiveActionLocks[messageId]) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing" || game.revealedSafeCount === 0) return;
@@ -1418,15 +1489,24 @@ async function persistInteractiveGameUpdate(message, nextContent) {
   };
 
   state.remoteSyncEpoch += 1;
-  state.interactiveActionLocks[message.id] = true;
   state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
-  await persistMessageUpdate(nextMessage);
-  delete state.interactiveActionLocks[message.id];
+  const previousQueue = interactivePersistQueues[message.id] || Promise.resolve();
+  const nextQueue = previousQueue
+    .catch(() => null)
+    .then(async () => {
+      await persistMessageUpdate(nextMessage);
+    });
+  interactivePersistQueues[message.id] = nextQueue;
+  await nextQueue.finally(() => {
+    if (interactivePersistQueues[message.id] === nextQueue) {
+      delete interactivePersistQueues[message.id];
+    }
+  });
   void loadPersistedMessages();
 }
 
-function createMinesGameState() {
+function createMinesGameState(mineCount = state.preferredMineCount) {
   const cells = Array.from({ length: MINES_GRID_SIZE }, (_, index) => ({
     id: uid(),
     index,
@@ -1434,7 +1514,8 @@ function createMinesGameState() {
     revealed: false
   }));
 
-  const mineIndexes = shuffle(Array.from({ length: MINES_GRID_SIZE }, (_, index) => index)).slice(0, MINES_MINE_COUNT);
+  const safeMineCount = MINES_MINE_OPTIONS.includes(Number(mineCount)) ? Number(mineCount) : MINES_MINE_COUNT;
+  const mineIndexes = shuffle(Array.from({ length: MINES_GRID_SIZE }, (_, index) => index)).slice(0, safeMineCount);
   for (const mineIndex of mineIndexes) {
     cells[mineIndex].isMine = true;
   }
@@ -1446,7 +1527,7 @@ function createMinesGameState() {
     revision: 1,
     status: "playing",
     baseStake: MINES_BASE_STAKE,
-    mineCount: MINES_MINE_COUNT,
+    mineCount: safeMineCount,
     revealedSafeCount: 0,
     multiplier: 1,
     collectible: MINES_BASE_STAKE,
@@ -2061,6 +2142,65 @@ function hasMeaningfulMessageDifference(currentMessage, nextMessage) {
 
 function hasActiveBlackjackInteraction() {
   return Object.keys(state.interactiveActionLocks || {}).length > 0 || Object.keys(state.pendingUpdatedMessages || {}).length > 0;
+}
+
+function applyLocalMessageFilters(messages, channelId) {
+  const clearedAt = getLocalClearTimestamp(state.scopeKey, channelId);
+  if (!clearedAt) return messages;
+  return (messages || []).filter((message) => normalizeMessageTimestamp(message) > clearedAt);
+}
+
+function isClearChatCommand(value) {
+  const normalized = String(value || "").trim().toLocaleLowerCase();
+  return normalized === "/clear" || normalized === "clear chat" || normalized === "/clear chat";
+}
+
+function clearCurrentChannelLocally() {
+  const channelId = selectedChannel()?.id;
+  if (!channelId) return;
+  setLocalClearTimestamp(state.scopeKey, channelId, Date.now());
+  state.forceScrollToBottom = true;
+  render();
+  showToast("Chat sadece senin ekranında temizlendi.");
+}
+
+function loadPreferredMineCount() {
+  try {
+    const value = Number(window.localStorage.getItem(LOCAL_MINES_MINE_COUNT_KEY));
+    return MINES_MINE_OPTIONS.includes(value) ? value : MINES_MINE_COUNT;
+  } catch {
+    return MINES_MINE_COUNT;
+  }
+}
+
+function savePreferredMineCount(value) {
+  try {
+    window.localStorage.setItem(LOCAL_MINES_MINE_COUNT_KEY, String(value));
+  } catch {
+    // Local preferences are best-effort.
+  }
+}
+
+function getLocalClearTimestamp(scopeKey, channelId) {
+  if (!scopeKey || !channelId) return 0;
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(LOCAL_CLEAR_CHAT_KEY) || "{}");
+    return Number(raw?.[scopeKey]?.[channelId]) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function setLocalClearTimestamp(scopeKey, channelId, timestamp) {
+  if (!scopeKey || !channelId) return;
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(LOCAL_CLEAR_CHAT_KEY) || "{}");
+    raw[scopeKey] ||= {};
+    raw[scopeKey][channelId] = timestamp;
+    window.localStorage.setItem(LOCAL_CLEAR_CHAT_KEY, JSON.stringify(raw));
+  } catch {
+    // Local clear markers are best-effort.
+  }
 }
 
 function normalizeMessageTimestamp(message) {

@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
-const MESSAGE_LIMIT = 100;
+const MESSAGE_LIMIT = 50;
 
 globalThis.__activityChatStore ||= { scopes: {} };
 let supabaseClient;
