@@ -1763,7 +1763,7 @@ function renderDragonRealtimeView() {
   const participant = getDragonParticipant(game, state.currentUser.id);
   const joined = Boolean(participant);
   const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
-  const multiplier = phase === "playing" ? getDragonLiveMultiplier(game) : roundMultiplier(game.finalMultiplier || 1);
+  const multiplier = getDragonDisplayMultiplier(game, phase);
   const autoTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget);
   const collectible = participant?.status === "cashed_out"
     ? participant.cashoutValue
@@ -1997,6 +1997,13 @@ async function handleDragonHubAction(action, options = {}) {
     const clientMultiplier = action === "cashout" && state.dragonSession
       ? getDragonLiveMultiplier(state.dragonSession.content)
       : null;
+    if (action === "cashout" && state.dragonSession) {
+      const optimisticSession = applyOptimisticDragonCashout(state.dragonSession, state.currentUser.id, clientMultiplier);
+      if (optimisticSession) {
+        state.dragonSession = optimisticSession;
+        render();
+      }
+    }
     const response = await fetch("/api/dragon", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2071,7 +2078,7 @@ async function saveDragonConfig() {
     const payload = await response.json();
     syncDragonConfigFromServer(payload.config || config, { overwriteDraft: true });
     showToast("Ejderha ayarlari kaydedildi.");
-    render();
+    closeUserModal();
   } catch (error) {
     console.warn("Dragon config save failed.", error);
     showToast("Ejderha ayarlari kaydedilemedi.");
@@ -2997,11 +3004,15 @@ function normalizeDragonConfig(config) {
 
 function syncDragonConfigFromServer(config, { overwriteDraft = true } = {}) {
   const normalized = normalizeDragonConfig(config);
+  const previousConfig = JSON.stringify(state.dragonConfig || {});
+  const nextConfig = JSON.stringify(normalized);
   state.dragonConfig = normalized;
   if (overwriteDraft) {
     state.dragonConfigDraft = normalizeDragonConfig(normalized);
   }
-  renderUserModal();
+  if (previousConfig !== nextConfig && userBackdrop.classList.contains("open")) {
+    renderUserModal();
+  }
 }
 
 function getLocalClearTimestamp(scopeKey, channelId) {
@@ -3058,6 +3069,34 @@ function getDragonLiveMultiplier(gameState, now = Date.now()) {
   const effectiveElapsed = elapsedSeconds * game.config.speedFactor;
   const multiplier = 1 + (effectiveElapsed * 0.09) + (effectiveElapsed * effectiveElapsed * 0.03);
   return roundMultiplier(Math.min(game.crashAtMultiplier, multiplier));
+}
+
+function getDragonDisplayMultiplier(gameState, phase = getDragonPhase(gameState)) {
+  const game = normalizeDragonState(gameState);
+  if (phase === "playing") {
+    return getDragonLiveMultiplier(game);
+  }
+  if (phase === "finished") {
+    return roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
+  }
+  return roundMultiplier(game.finalMultiplier || 1);
+}
+
+function applyOptimisticDragonCashout(session, userId, multiplier) {
+  if (!session?.content) return null;
+  const game = normalizeDragonState(session.content);
+  const participant = (game.participants || []).find((entry) => entry.id === userId);
+  if (!participant || participant.status !== "joined") return null;
+
+  participant.status = "cashed_out";
+  participant.cashoutMultiplier = roundMultiplier(multiplier || getDragonLiveMultiplier(game));
+  participant.cashoutValue = roundCoinValue(game.baseStake * participant.cashoutMultiplier);
+  game.revision += 1;
+
+  return {
+    ...session,
+    content: game
+  };
 }
 
 function shouldDragonCrash(gameState, now = Date.now()) {
@@ -3166,7 +3205,7 @@ function syncDragonModalLoop() {
     const collectibleNode = document.querySelector("[data-dragon-live-collectible]");
     const subtitleNode = document.querySelector("[data-dragon-live-subtitle]");
     if (multiplierNode) {
-      const multiplier = phase === "playing" ? getDragonLiveMultiplier(game) : roundMultiplier(game.finalMultiplier || 1);
+      const multiplier = getDragonDisplayMultiplier(game, phase);
       multiplierNode.textContent = formatMultiplier(multiplier);
     }
     if (collectibleNode) {

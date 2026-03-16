@@ -1053,25 +1053,28 @@ svg { display: block; }
 .dragon-hub-scene {
   min-height: 360px;
   background:
-    radial-gradient(circle at 42% 50%, rgba(255, 173, 78, 0.24), transparent 18%),
-    radial-gradient(circle at 70% 48%, rgba(255, 112, 57, 0.14), transparent 28%),
+    radial-gradient(circle at 58% 50%, rgba(255, 173, 78, 0.24), transparent 18%),
+    radial-gradient(circle at 30% 48%, rgba(255, 112, 57, 0.14), transparent 28%),
     linear-gradient(180deg, rgba(79, 36, 117, 0.62), rgba(35, 22, 54, 0.95));
 }
 .dragon-hub-scene .dragon-hub-dragon {
-  left: auto;
-  right: 12%;
+  left: 12%;
+  right: auto;
   font-size: 110px;
   z-index: 2;
-  transform: translateY(-50%) scaleX(-1);
+  transform: translateY(-50%);
   animation: dragonFloat 3.2s ease-in-out infinite;
 }
+.dragon-hub-scene.is-crashed .dragon-hub-dragon {
+  animation: none;
+}
 .dragon-hub-scene .dragon-modal-fire {
-  left: auto;
-  right: 28%;
+  left: 28%;
+  right: auto;
   top: 50%;
   gap: 10px;
   z-index: 1;
-  transform: translateY(-50%) scaleX(-1);
+  transform: translateY(-50%);
 }
 .dragon-hub-scene .dragon-modal-fire span {
   width: 90px;
@@ -1083,7 +1086,7 @@ svg { display: block; }
 }
 .dragon-flame-meter {
   position: absolute;
-  left: 42%;
+  left: 58%;
   top: 50%;
   transform: translate(-50%, -50%);
   width: 180px;
@@ -1645,11 +1648,13 @@ svg { display: block; }
     flex: 1;
   }
   .dragon-hub-scene .dragon-hub-dragon {
-    right: 8%;
+    left: 8%;
+    right: auto;
     font-size: 88px;
   }
   .dragon-hub-scene .dragon-modal-fire {
-    right: 22%;
+    left: 22%;
+    right: auto;
   }
   .dragon-hub-scene .dragon-modal-fire span {
     width: 64px;
@@ -1657,7 +1662,7 @@ svg { display: block; }
   .dragon-flame-meter {
     width: 140px;
     height: 140px;
-    left: 38%;
+    left: 62%;
   }
   .dragon-scene-multiplier {
     font-size: 32px;
@@ -1695,9 +1700,9 @@ svg { display: block; }
 }
 @keyframes dragonFloat {
   0%, 100% {
-    transform: translateY(-50%) scaleX(-1) translateY(0);
+    transform: translateY(-50%) translateY(0);
   }
   50% {
-    transform: translateY(-50%) scaleX(-1) translateY(-8px);
+    transform: translateY(-50%) translateY(-8px);
   }
 }
