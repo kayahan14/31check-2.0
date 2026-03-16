@@ -88,7 +88,7 @@ const state = {
   dragonStateLoading: true,
   dragonSessionSyncHandle: null,
   dragonServerOffsetMs: 0,
-  dragonLastRealtimeAt: 0,
+  dragonRealtimeReady: false,
   dragonConfig: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   isMessagesLoading: true,
@@ -2062,10 +2062,8 @@ async function handleDragonHubAction(action, options = {}) {
       throw new Error("Dragon action failed.");
     }
     const payload = await response.json();
-    syncDragonServerClock(payload.serverNowMs);
-    state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload.session || null);
-    syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
-    render();
+    applyDragonTransportPayload(payload, { forceRender: true });
+    await broadcastDragonTransportPayload(payload);
   } catch (error) {
     console.warn("Dragon hub action failed.", error);
   } finally {
@@ -2074,9 +2072,6 @@ async function handleDragonHubAction(action, options = {}) {
 }
 
 async function loadDragonSession({ initial = false } = {}) {
-  const previousLoading = state.dragonStateLoading;
-  const previousSessionKey = getDragonSessionRenderKey(state.dragonSession);
-  const previousConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
   if (initial) {
     state.dragonStateLoading = true;
     if (isCasinoDragonView()) render();
@@ -2088,22 +2083,12 @@ async function loadDragonSession({ initial = false } = {}) {
     });
     if (!response.ok) return;
     const payload = await response.json();
-    syncDragonServerClock(payload.serverNowMs);
-    state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload.session || null);
-    syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
+    applyDragonTransportPayload(payload, { forceRender: initial });
   } catch (error) {
     console.warn("Dragon session load failed.", error);
   } finally {
     state.dragonStateLoading = false;
-    const nextSessionKey = getDragonSessionRenderKey(state.dragonSession);
-    const nextConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
-    const shouldRenderDragonView = isCasinoDragonView() && (
-      initial
-      || previousLoading !== state.dragonStateLoading
-      || previousSessionKey !== nextSessionKey
-      || previousConfigKey !== nextConfigKey
-    );
-    if (shouldRenderDragonView) render();
+    if (initial && isCasinoDragonView()) render();
   }
 }
 
@@ -2129,8 +2114,8 @@ async function saveDragonConfig() {
       throw new Error("Dragon config save failed.");
     }
     const payload = await response.json();
-    syncDragonServerClock(payload.serverNowMs);
-    syncDragonConfigFromServer(payload.config || config, { overwriteDraft: true });
+    applyDragonTransportPayload(payload, { forceRender: false, overwriteDraft: true });
+    await broadcastDragonTransportPayload(payload);
     showToast("Ejderha ayarlari kaydedildi.");
     closeUserModal();
   } catch (error) {
@@ -2155,17 +2140,25 @@ async function initializeDragonTransport() {
       state.dragonRealtimeClient.removeChannel(state.dragonRealtimeChannel);
       state.dragonRealtimeChannel = null;
     }
+    state.dragonRealtimeReady = false;
     state.dragonRealtimeChannel = state.dragonRealtimeClient
-      .channel(`dragon-${state.scopeKey}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => {
-        const row = payload?.new || payload?.old;
-        if (!isDragonRealtimeRow(row)) return;
-        state.dragonLastRealtimeAt = Date.now();
-        void loadDragonSession();
+      .channel(`dragon-${state.scopeKey}`, {
+        config: {
+          broadcast: { self: true }
+        }
       })
-      .subscribe();
+      .on("broadcast", { event: "session-sync" }, ({ payload }) => {
+        applyDragonTransportPayload(payload);
+      })
+      .subscribe((status) => {
+        state.dragonRealtimeReady = status === "SUBSCRIBED";
+        if (status === "SUBSCRIBED") {
+          void loadDragonSession();
+        }
+      });
   } catch (error) {
     console.warn("Dragon realtime subscription failed, falling back to refresh.", error);
+    state.dragonRealtimeReady = false;
   }
 }
 
@@ -2175,22 +2168,15 @@ function startDragonSessionSync() {
 
   state.dragonSessionSyncHandle = window.setInterval(() => {
     if (!state.dragonSession && !isCasinoDragonView()) return;
-    if (state.dragonRealtimeChannel) return;
+    if (state.dragonRealtimeReady) return;
     void loadDragonSession();
-  }, 5000);
+  }, 8000);
 }
 
 function stopDragonSessionSync() {
   if (!state.dragonSessionSyncHandle) return;
   window.clearInterval(state.dragonSessionSyncHandle);
   state.dragonSessionSyncHandle = null;
-}
-
-function isDragonRealtimeRow(row) {
-  return row
-    && row.scope_key === state.scopeKey
-    && row.channel_id === DRAGON_CHANNEL_ID
-    && row.message_type === "dragon_state";
 }
 
 async function persistInteractiveGameUpdate(message, nextContent) {
@@ -3125,6 +3111,50 @@ function getDragonSessionRenderKey(session) {
     finalMultiplier: game.finalMultiplier,
     crashAtMultiplier: game.crashAtMultiplier
   });
+}
+
+function applyDragonTransportPayload(payload, options = {}) {
+  const {
+    forceRender = false,
+    overwriteDraft = state.userModalView !== "dragon"
+  } = options;
+  const previousSessionKey = getDragonSessionRenderKey(state.dragonSession);
+  const previousConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
+
+  syncDragonServerClock(payload?.serverNowMs);
+  state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload?.session || null);
+  if (payload?.config) {
+    syncDragonConfigFromServer(payload.config, { overwriteDraft });
+  }
+
+  const nextSessionKey = getDragonSessionRenderKey(state.dragonSession);
+  const nextConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
+  const shouldRenderDragonView = isCasinoDragonView() && (
+    forceRender
+    || previousSessionKey !== nextSessionKey
+    || previousConfigKey !== nextConfigKey
+  );
+
+  if (shouldRenderDragonView) {
+    render();
+  }
+}
+
+async function broadcastDragonTransportPayload(payload) {
+  if (!state.dragonRealtimeChannel || !state.dragonRealtimeReady) return;
+  try {
+    await state.dragonRealtimeChannel.send({
+      type: "broadcast",
+      event: "session-sync",
+      payload: {
+        session: payload?.session || null,
+        config: payload?.config || state.dragonConfig,
+        serverNowMs: payload?.serverNowMs || getDragonNow()
+      }
+    });
+  } catch (error) {
+    console.warn("Dragon broadcast send failed.", error);
+  }
 }
 
 function syncDragonServerClock(serverNowMs) {
