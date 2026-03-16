@@ -5,9 +5,14 @@ const DRAGON_TYPE = "dragon_state";
 const DRAGON_CONFIG_TYPE = "dragon_config";
 const BASE_STAKE = 100;
 const LOBBY_MS = 10000;
+const DRAGON_STAGE_TWO_MULTIPLIER = 2;
+const DRAGON_STAGE_THREE_MULTIPLIER = 3;
+const DRAGON_STAGE_TWO_SPEED = 0.75;
+const DRAGON_STAGE_THREE_SPEED = 1.25;
+const DRAGON_ALL_CASHED_OUT_SPEED = 5;
 const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: LOBBY_MS,
-  speedFactor: 1,
+  speedFactor: 0.35,
   testMode: false,
   testMaxMultiplier: 1.1
 };
@@ -203,6 +208,9 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     participant.status = "cashed_out";
     participant.cashoutMultiplier = multiplier;
     participant.cashoutValue = roundCoinValue(game.baseStake * multiplier);
+    if ((game.participants || []).every((entry) => entry.status !== "joined")) {
+      game.acceleratedAtMs = now;
+    }
     game.revision += 1;
 
     const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
@@ -329,6 +337,7 @@ function normalizeDragonState(content, now = Date.now()) {
   game.startedAtMs = Number(game.startedAtMs) > 0 ? Number(game.startedAtMs) : game.launchAtMs;
   game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier(game.config);
   game.finalMultiplier = Number(game.finalMultiplier) > 0 ? Number(game.finalMultiplier) : 1;
+  game.acceleratedAtMs = Number(game.acceleratedAtMs) > 0 ? Number(game.acceleratedAtMs) : 0;
   game.resultSummary ||= "";
   game.participants = Array.isArray(game.participants) ? game.participants.map((entry) => ({
     id: entry?.id || "user",
@@ -358,6 +367,45 @@ function normalizeDragonConfig(config) {
   };
 }
 
+function getDragonEffectiveElapsedForMultiplier(targetMultiplier) {
+  const safeTarget = Math.max(1, Number(targetMultiplier || 1));
+  const discriminant = (0.09 * 0.09) + (4 * 0.03 * (safeTarget - 1));
+  return Math.max(0, (-0.09 + Math.sqrt(discriminant)) / (2 * 0.03));
+}
+
+function getDragonBaseEffectiveElapsed(game, elapsedSeconds) {
+  const stageOneSpeed = Math.max(0.1, Number(game?.config?.speedFactor || DEFAULT_DRAGON_CONFIG.speedFactor));
+  const stageTwoSpeed = Math.max(stageOneSpeed, DRAGON_STAGE_TWO_SPEED);
+  const stageThreeSpeed = Math.max(stageTwoSpeed, DRAGON_STAGE_THREE_SPEED);
+  const stageTwoEffective = getDragonEffectiveElapsedForMultiplier(DRAGON_STAGE_TWO_MULTIPLIER);
+  const stageThreeEffective = getDragonEffectiveElapsedForMultiplier(DRAGON_STAGE_THREE_MULTIPLIER);
+  const stageOneSeconds = stageTwoEffective / stageOneSpeed;
+  const stageTwoSeconds = stageOneSeconds + ((stageThreeEffective - stageTwoEffective) / stageTwoSpeed);
+
+  if (elapsedSeconds <= stageOneSeconds) {
+    return elapsedSeconds * stageOneSpeed;
+  }
+
+  if (elapsedSeconds <= stageTwoSeconds) {
+    return stageTwoEffective + ((elapsedSeconds - stageOneSeconds) * stageTwoSpeed);
+  }
+
+  return stageThreeEffective + ((elapsedSeconds - stageTwoSeconds) * stageThreeSpeed);
+}
+
+function getDragonEffectiveElapsed(game, now = Date.now()) {
+  const startedAtMs = Number(game?.startedAtMs || game?.launchAtMs || now);
+  const elapsedSeconds = Math.max(0, now - startedAtMs) / 1000;
+  const acceleratedAtMs = Number(game?.acceleratedAtMs || 0);
+  if (!acceleratedAtMs || acceleratedAtMs <= startedAtMs || now <= acceleratedAtMs) {
+    return getDragonBaseEffectiveElapsed(game, elapsedSeconds);
+  }
+
+  const baseBeforeAcceleration = getDragonBaseEffectiveElapsed(game, Math.max(0, acceleratedAtMs - startedAtMs) / 1000);
+  const acceleratedSeconds = Math.max(0, now - acceleratedAtMs) / 1000;
+  return baseBeforeAcceleration + (acceleratedSeconds * DRAGON_ALL_CASHED_OUT_SPEED);
+}
+
 function getDragonPhase(gameState, now = Date.now()) {
   const game = typeof gameState?.game === "string" ? gameState : normalizeDragonState(gameState, now);
   if (game.status === "crashed") return "finished";
@@ -375,8 +423,7 @@ function getDragonLiveMultiplier(gameState, now = Date.now()) {
     return 1;
   }
 
-  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
-  const effectiveElapsed = elapsedSeconds * game.config.speedFactor;
+  const effectiveElapsed = getDragonEffectiveElapsed(game, now);
   const multiplier = 1 + (effectiveElapsed * 0.09) + (effectiveElapsed * effectiveElapsed * 0.03);
   return roundMultiplier(Math.min(game.crashAtMultiplier, multiplier));
 }
@@ -389,8 +436,7 @@ function hasDragonCrashedByNow(gameState, now = Date.now()) {
   const game = typeof gameState?.game === "string" ? gameState : normalizeDragonState(gameState, now);
   if (game.status === "crashed" || now < game.launchAtMs) return false;
 
-  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
-  const effectiveElapsed = elapsedSeconds * game.config.speedFactor;
+  const effectiveElapsed = getDragonEffectiveElapsed(game, now);
   const multiplier = 1 + (effectiveElapsed * 0.09) + (effectiveElapsed * effectiveElapsed * 0.03);
   return multiplier >= game.crashAtMultiplier;
 }

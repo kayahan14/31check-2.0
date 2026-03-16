@@ -52,9 +52,14 @@ const MINES_BASE_STAKE = 100;
 const MINES_MINE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8];
 const DRAGON_BASE_STAKE = 100;
 const DRAGON_TICK_MS = 400;
+const DRAGON_STAGE_TWO_MULTIPLIER = 2;
+const DRAGON_STAGE_THREE_MULTIPLIER = 3;
+const DRAGON_STAGE_TWO_SPEED = 0.75;
+const DRAGON_STAGE_THREE_SPEED = 1.25;
+const DRAGON_ALL_CASHED_OUT_SPEED = 5;
 const DEFAULT_DRAGON_CONFIG = {
   lobbyMs: 10000,
-  speedFactor: 1,
+  speedFactor: 0.35,
   testMode: false,
   testMaxMultiplier: 1.1
 };
@@ -102,6 +107,9 @@ const state = {
   preferredMineCount: loadPreferredMineCount(),
   dragonAutoCashoutEnabled: dragonAutoCashoutPreference.enabled,
   dragonAutoCashoutTarget: dragonAutoCashoutPreference.target,
+  dragonRoundAutoCashoutEnabled: dragonAutoCashoutPreference.enabled,
+  dragonRoundAutoCashoutTarget: dragonAutoCashoutPreference.target,
+  dragonRoundSessionId: "",
   toastMessage: "",
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
@@ -1299,6 +1307,9 @@ function selectChannel(id) {
   state.selectedChannelId = id;
   syncUrl(id);
   render();
+  if (isCasinoDragonView(id)) {
+    void loadDragonSession();
+  }
 }
 
 function selectedChannel() {
@@ -1808,7 +1819,8 @@ function renderDragonRealtimeView() {
   const joined = Boolean(participant);
   const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - getDragonNow()) / 1000));
   const multiplier = getDragonDisplayMultiplier(game, phase);
-  const autoTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget);
+  const autoSettings = getDragonRoundAutoSettings(session);
+  const autoTarget = normalizeDragonAutoCashoutTarget(autoSettings.target);
   const collectible = participant?.status === "cashed_out"
     ? participant.cashoutValue
     : phase === "playing" && participant?.status === "joined"
@@ -2338,6 +2350,7 @@ function normalizeDragonState(content) {
   game.startedAtMs = Number(game.startedAtMs) > 0 ? Number(game.startedAtMs) : game.launchAtMs;
   game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier(game.config);
   game.finalMultiplier = Number(game.finalMultiplier) > 0 ? Number(game.finalMultiplier) : 1;
+  game.acceleratedAtMs = Number(game.acceleratedAtMs) > 0 ? Number(game.acceleratedAtMs) : 0;
   game.collectible = Number(game.collectible) >= 0 ? Number(game.collectible) : game.baseStake;
   game.participants = Array.isArray(game.participants) ? game.participants.map((entry) => ({
     id: entry?.id || uid(),
@@ -3054,6 +3067,45 @@ function normalizeDragonConfig(config) {
   };
 }
 
+function getDragonEffectiveElapsedForMultiplier(targetMultiplier) {
+  const safeTarget = Math.max(1, Number(targetMultiplier || 1));
+  const discriminant = (0.09 * 0.09) + (4 * 0.03 * (safeTarget - 1));
+  return Math.max(0, (-0.09 + Math.sqrt(discriminant)) / (2 * 0.03));
+}
+
+function getDragonBaseEffectiveElapsed(game, elapsedSeconds) {
+  const stageOneSpeed = Math.max(0.1, Number(game?.config?.speedFactor || DEFAULT_DRAGON_CONFIG.speedFactor));
+  const stageTwoSpeed = Math.max(stageOneSpeed, DRAGON_STAGE_TWO_SPEED);
+  const stageThreeSpeed = Math.max(stageTwoSpeed, DRAGON_STAGE_THREE_SPEED);
+  const stageTwoEffective = getDragonEffectiveElapsedForMultiplier(DRAGON_STAGE_TWO_MULTIPLIER);
+  const stageThreeEffective = getDragonEffectiveElapsedForMultiplier(DRAGON_STAGE_THREE_MULTIPLIER);
+  const stageOneSeconds = stageTwoEffective / stageOneSpeed;
+  const stageTwoSeconds = stageOneSeconds + ((stageThreeEffective - stageTwoEffective) / stageTwoSpeed);
+
+  if (elapsedSeconds <= stageOneSeconds) {
+    return elapsedSeconds * stageOneSpeed;
+  }
+
+  if (elapsedSeconds <= stageTwoSeconds) {
+    return stageTwoEffective + ((elapsedSeconds - stageOneSeconds) * stageTwoSpeed);
+  }
+
+  return stageThreeEffective + ((elapsedSeconds - stageTwoSeconds) * stageThreeSpeed);
+}
+
+function getDragonEffectiveElapsed(game, now = getDragonNow()) {
+  const startedAtMs = Number(game?.startedAtMs || game?.launchAtMs || now);
+  const elapsedSeconds = Math.max(0, now - startedAtMs) / 1000;
+  const acceleratedAtMs = Number(game?.acceleratedAtMs || 0);
+  if (!acceleratedAtMs || acceleratedAtMs <= startedAtMs || now <= acceleratedAtMs) {
+    return getDragonBaseEffectiveElapsed(game, elapsedSeconds);
+  }
+
+  const baseBeforeAcceleration = getDragonBaseEffectiveElapsed(game, Math.max(0, acceleratedAtMs - startedAtMs) / 1000);
+  const acceleratedSeconds = Math.max(0, now - acceleratedAtMs) / 1000;
+  return baseBeforeAcceleration + (acceleratedSeconds * DRAGON_ALL_CASHED_OUT_SPEED);
+}
+
 function syncDragonConfigFromServer(config, { overwriteDraft = true } = {}) {
   const normalized = normalizeDragonConfig(config);
   const previousConfig = JSON.stringify(state.dragonConfig || {});
@@ -3118,11 +3170,20 @@ function applyDragonTransportPayload(payload, options = {}) {
     forceRender = false,
     overwriteDraft = state.userModalView !== "dragon"
   } = options;
+  const incomingSessionId = payload?.session?.id || "";
   const previousSessionKey = getDragonSessionRenderKey(state.dragonSession);
   const previousConfigKey = JSON.stringify(normalizeDragonConfig(state.dragonConfig));
 
   syncDragonServerClock(payload?.serverNowMs);
   state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload?.session || null);
+  if (incomingSessionId && incomingSessionId !== state.dragonRoundSessionId) {
+    state.dragonRoundSessionId = incomingSessionId;
+    state.dragonRoundAutoCashoutEnabled = Boolean(state.dragonAutoCashoutEnabled);
+    state.dragonRoundAutoCashoutTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget);
+  }
+  if (!incomingSessionId) {
+    state.dragonRoundSessionId = "";
+  }
   if (payload?.config) {
     syncDragonConfigFromServer(payload.config, { overwriteDraft });
   }
@@ -3138,6 +3199,21 @@ function applyDragonTransportPayload(payload, options = {}) {
   if (shouldRenderDragonView) {
     render();
   }
+}
+
+function getDragonRoundAutoSettings(session = state.dragonSession) {
+  const sessionId = session?.id || "";
+  if (sessionId && sessionId === state.dragonRoundSessionId) {
+    return {
+      enabled: Boolean(state.dragonRoundAutoCashoutEnabled),
+      target: normalizeDragonAutoCashoutTarget(state.dragonRoundAutoCashoutTarget)
+    };
+  }
+
+  return {
+    enabled: Boolean(state.dragonAutoCashoutEnabled),
+    target: normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget)
+  };
 }
 
 async function broadcastDragonTransportPayload(payload) {
@@ -3218,8 +3294,7 @@ function getDragonLiveMultiplier(gameState, now = getDragonNow()) {
     return 1;
   }
 
-  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
-  const effectiveElapsed = elapsedSeconds * game.config.speedFactor;
+  const effectiveElapsed = getDragonEffectiveElapsed(game, now);
   const multiplier = 1 + (effectiveElapsed * 0.09) + (effectiveElapsed * effectiveElapsed * 0.03);
   return roundMultiplier(Math.min(game.crashAtMultiplier, multiplier));
 }
@@ -3250,6 +3325,9 @@ function applyOptimisticDragonCashout(session, userId, multiplier) {
   participant.status = "cashed_out";
   participant.cashoutMultiplier = roundMultiplier(multiplier || getDragonLiveMultiplier(game));
   participant.cashoutValue = roundCoinValue(game.baseStake * participant.cashoutMultiplier);
+  if ((game.participants || []).every((entry) => entry.status !== "joined")) {
+    game.acceleratedAtMs = getDragonNow();
+  }
   game.revision += 1;
   game.finalMultiplier = participant.cashoutMultiplier;
 
@@ -3263,8 +3341,7 @@ function shouldDragonCrash(gameState, now = getDragonNow()) {
   const game = normalizeDragonState(gameState);
   if (game.status === "crashed" || now < game.launchAtMs) return false;
 
-  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
-  const effectiveElapsed = elapsedSeconds * game.config.speedFactor;
+  const effectiveElapsed = getDragonEffectiveElapsed(game, now);
   const multiplier = 1 + (effectiveElapsed * 0.09) + (effectiveElapsed * effectiveElapsed * 0.03);
   return multiplier >= game.crashAtMultiplier;
 }
@@ -3391,8 +3468,8 @@ function syncDragonModalLoop() {
       isDedicatedDragonView
       && phase === "playing"
       && participant?.status === "joined"
-      && state.dragonAutoCashoutEnabled
-      && getDragonLiveMultiplier(game) >= normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget)
+      && getDragonRoundAutoSettings(message).enabled
+      && getDragonLiveMultiplier(game) >= getDragonRoundAutoSettings(message).target
       && !state.interactiveActionLocks[DRAGON_CHANNEL_ID]
     ) {
       void handleDragonHubAction("cashout");
