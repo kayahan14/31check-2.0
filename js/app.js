@@ -2625,7 +2625,7 @@ function getDragonLiveMultiplier(gameState, now = Date.now()) {
   }
 
   const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
-  const multiplier = 1 + (elapsedSeconds * 0.18) + (elapsedSeconds * elapsedSeconds * 0.06);
+  const multiplier = 1 + (elapsedSeconds * 0.09) + (elapsedSeconds * elapsedSeconds * 0.03);
   return roundMultiplier(Math.min(game.crashAtMultiplier, multiplier));
 }
 
@@ -2700,6 +2700,14 @@ function syncDragonModalLoop() {
     const game = normalizeDragonState(message.content);
     const phase = getDragonPhase(game);
     const participant = getDragonParticipant(game, state.currentUser.id);
+    const joinButton = document.querySelector("[data-dragon-join]");
+    const collectButton = document.querySelector("[data-dragon-collect]");
+    const shouldShowJoin = phase === "lobby";
+    const shouldShowCollect = phase === "playing" || phase === "finished";
+    if ((shouldShowJoin && !joinButton) || (shouldShowCollect && !collectButton)) {
+      render();
+      return;
+    }
     const multiplierNode = document.querySelector("[data-dragon-live-multiplier]");
     const collectibleNode = document.querySelector("[data-dragon-live-collectible]");
     if (multiplierNode) {
