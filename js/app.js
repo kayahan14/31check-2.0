@@ -77,6 +77,7 @@ const state = {
   dragonRealtimeChannel: null,
   dragonSession: null,
   dragonStateLoading: true,
+  dragonSessionSyncHandle: null,
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
@@ -396,6 +397,7 @@ function stopMessageSync() {
   }
 
   document.removeEventListener("visibilitychange", handleVisibilitySync);
+  stopDragonSessionSync();
   stopDragonModalLoop();
 }
 
@@ -403,6 +405,7 @@ function handleVisibilitySync() {
   if (hasActiveBlackjackInteraction()) return;
   if (document.visibilityState === "visible") {
     void loadPersistedMessages();
+    void loadDragonSession();
   }
 }
 
@@ -1870,7 +1873,7 @@ async function performDragonAction(messageId, actionType) {
 }
 
 async function handleDragonHubAction(action) {
-  if (state.isMessagesLoading || state.interactiveActionLocks[DRAGON_CHANNEL_ID]) return;
+  if (state.interactiveActionLocks[DRAGON_CHANNEL_ID]) return;
   state.interactiveActionLocks[DRAGON_CHANNEL_ID] = true;
   try {
     const response = await fetch("/api/dragon", {
@@ -1921,6 +1924,7 @@ async function loadDragonSession({ initial = false } = {}) {
 
 async function initializeDragonTransport() {
   await loadDragonSession({ initial: true });
+  startDragonSessionSync();
 
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
   try {
@@ -1943,6 +1947,22 @@ async function initializeDragonTransport() {
   } catch (error) {
     console.warn("Dragon realtime subscription failed, falling back to refresh.", error);
   }
+}
+
+function startDragonSessionSync() {
+  stopDragonSessionSync();
+  if (!state.scopeKey) return;
+
+  state.dragonSessionSyncHandle = window.setInterval(() => {
+    if (!state.dragonSession && !isCasinoDragonView()) return;
+    void loadDragonSession();
+  }, 1000);
+}
+
+function stopDragonSessionSync() {
+  if (!state.dragonSessionSyncHandle) return;
+  window.clearInterval(state.dragonSessionSyncHandle);
+  state.dragonSessionSyncHandle = null;
 }
 
 function isDragonRealtimeRow(row) {
@@ -2815,8 +2835,11 @@ function normalizeMessageTimestamp(message) {
 
 function getDragonLiveMultiplier(gameState, now = Date.now()) {
   const game = normalizeDragonState(gameState);
-  if (getDragonPhase(game, now) !== "playing") {
-    return roundMultiplier(game.finalMultiplier || 1);
+  if (game.status === "crashed") {
+    return roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
+  }
+  if (now < game.launchAtMs) {
+    return 1;
   }
 
   const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
@@ -2826,8 +2849,11 @@ function getDragonLiveMultiplier(gameState, now = Date.now()) {
 
 function shouldDragonCrash(gameState, now = Date.now()) {
   const game = normalizeDragonState(gameState);
-  if (getDragonPhase(game, now) !== "playing") return false;
-  return getDragonLiveMultiplier(game, now) >= game.crashAtMultiplier;
+  if (game.status === "crashed" || now < game.launchAtMs) return false;
+
+  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
+  const multiplier = 1 + (elapsedSeconds * 0.09) + (elapsedSeconds * elapsedSeconds * 0.03);
+  return multiplier >= game.crashAtMultiplier;
 }
 
 function generateDragonCrashMultiplier() {
@@ -2934,6 +2960,7 @@ function getDragonPhase(gameState, now = Date.now()) {
   const game = normalizeDragonState(gameState);
   if (game.status === "crashed") return "finished";
   if (now < game.launchAtMs) return "lobby";
+  if (shouldDragonCrash(game, now)) return "finished";
   return "playing";
 }
 

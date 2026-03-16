@@ -181,7 +181,7 @@ function normalizeDragonState(content, now = Date.now()) {
     cashoutValue: Number(entry?.cashoutValue) > 0 ? Number(entry.cashoutValue) : 0
   })) : [];
 
-  if (getDragonPhase(game, now) === "finished" && game.status !== "crashed") {
+  if (hasDragonCrashedByNow(game, now) && game.status !== "crashed") {
     game.status = "crashed";
     game.finalMultiplier = roundMultiplier(game.crashAtMultiplier);
     game.resultSummary = "EJDERHA PATLADI 💥";
@@ -195,14 +195,17 @@ function getDragonPhase(gameState, now = Date.now()) {
   const game = typeof gameState?.game === "string" ? gameState : normalizeDragonState(gameState, now);
   if (game.status === "crashed") return "finished";
   if (now < game.launchAtMs) return "lobby";
-  if (shouldDragonCrash(game, now)) return "finished";
+  if (hasDragonCrashedByNow(game, now)) return "finished";
   return "playing";
 }
 
 function getDragonLiveMultiplier(gameState, now = Date.now()) {
   const game = typeof gameState?.game === "string" ? gameState : normalizeDragonState(gameState, now);
-  if (getDragonPhase(game, now) !== "playing") {
-    return roundMultiplier(game.finalMultiplier || 1);
+  if (game.status === "crashed") {
+    return roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
+  }
+  if (now < game.launchAtMs) {
+    return 1;
   }
   const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
   const multiplier = 1 + (elapsedSeconds * 0.09) + (elapsedSeconds * elapsedSeconds * 0.03);
@@ -210,9 +213,16 @@ function getDragonLiveMultiplier(gameState, now = Date.now()) {
 }
 
 function shouldDragonCrash(gameState, now = Date.now()) {
+  return hasDragonCrashedByNow(gameState, now);
+}
+
+function hasDragonCrashedByNow(gameState, now = Date.now()) {
   const game = typeof gameState?.game === "string" ? gameState : normalizeDragonState(gameState, now);
-  if (now < game.launchAtMs) return false;
-  return getDragonLiveMultiplier(game, now) >= game.crashAtMultiplier;
+  if (game.status === "crashed" || now < game.launchAtMs) return false;
+
+  const elapsedSeconds = Math.max(0, now - game.startedAtMs) / 1000;
+  const multiplier = 1 + (elapsedSeconds * 0.09) + (elapsedSeconds * elapsedSeconds * 0.03);
+  return multiplier >= game.crashAtMultiplier;
 }
 
 function generateDragonCrashMultiplier() {
