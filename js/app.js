@@ -44,7 +44,7 @@ const BLACKJACK_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J",
 const MINES_GRID_SIZE = 9;
 const MINES_MINE_COUNT = 2;
 const MINES_BASE_STAKE = 100;
-const MINES_MINE_OPTIONS = [1, 2, 3, 4];
+const MINES_MINE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8];
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 
