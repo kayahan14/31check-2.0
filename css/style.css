@@ -426,6 +426,15 @@ svg { display: block; }
   font-weight: 600;
   color: var(--text-main);
 }
+.blackjack-summary-main.is-win {
+  color: #86efac;
+}
+.blackjack-summary-main.is-loss {
+  color: #fda4af;
+}
+.blackjack-summary-main.is-push {
+  color: #fde68a;
+}
 .blackjack-summary-sub {
   font-size: 10px;
   line-height: 1.35;
@@ -587,8 +596,8 @@ svg { display: block; }
 }
 .toast {
   position: fixed;
-  top: 18px;
-  right: 18px;
+  left: 50%;
+  top: 50%;
   z-index: 40;
   padding: 10px 14px;
   border-radius: 12px;
@@ -598,6 +607,7 @@ svg { display: block; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 13px;
   font-weight: 600;
+  transform: translate(-50%, -50%);
 }
 .scroll-to-bottom {
   position: absolute;

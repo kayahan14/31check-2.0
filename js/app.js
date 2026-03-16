@@ -1160,15 +1160,7 @@ function getBlackjackStatusLine(game, activeHand, ownerCanPlay) {
     return decorateBlackjackSummary(game.resultSummary);
   }
 
-  if (!ownerCanPlay) {
-    return `${game.ownerName} oynuyor`;
-  }
-
-  if (activeHand?.isSplitHand) {
-    return `El ${game.activeHandIndex + 1} sirada`;
-  }
-
-  return "Hamleni sec";
+  return "";
 }
 
 function renderBlackjackMessage(message) {
@@ -1178,15 +1170,18 @@ function renderBlackjackMessage(message) {
   const actions = getBlackjackActions(game, activeHand);
   const resultTone = getBlackjackResultTone(game.resultSummary);
   const statusLine = game.status === "finished"
-    ? decorateBlackjackSummary(game.resultSummary)
+    ? ""
     : getBlackjackStatusLine(game, activeHand, ownerCanPlay);
+  const resultTitle = game.status === "finished" ? renderBlackjackResultTitle(game.resultSummary) : "";
 
   return `
     <div class="blackjack-card">
-      <div class="blackjack-summary">
-        <div class="blackjack-summary-main">${highlightText(game.summary, state.searchQuery)}</div>
-        ${statusLine ? `<div class="blackjack-summary-sub ${resultTone ? `is-${resultTone}` : ""}">${escapeHtml(statusLine)}</div>` : ""}
-      </div>
+      ${resultTitle || statusLine ? `
+        <div class="blackjack-summary">
+          ${resultTitle ? `<div class="blackjack-summary-main ${resultTone ? `is-${resultTone}` : ""}">${escapeHtml(resultTitle)}</div>` : ""}
+          ${statusLine ? `<div class="blackjack-summary-sub ${resultTone ? `is-${resultTone}` : ""}">${escapeHtml(statusLine)}</div>` : ""}
+        </div>
+      ` : ""}
       <div class="blackjack-table">
         <section class="blackjack-seat">
           <div class="blackjack-seat-label">Kasa</div>
@@ -1656,14 +1651,22 @@ function renderDealerTotal(game) {
 
 function decorateBlackjackSummary(summary) {
   return String(summary || "")
-    .replaceAll("Kayip", "Kayip ☠")
-    .replaceAll("Kazandi", "Kazandi ✓");
+    .replaceAll("Kayip", "KAYBETTIN ☠️")
+    .replaceAll("Kazandi", "KAZANDIN 👑");
 }
 
 function formatBlackjackResultLabel(label) {
-  if (label === "Kayip") return "Kayip ☠";
-  if (label === "Kazandi") return "Kazandi ✓";
+  if (label === "Kayip") return "KAYBETTIN ☠️";
+  if (label === "Kazandi") return "KAZANDIN 👑";
   return label || "";
+}
+
+function renderBlackjackResultTitle(label) {
+  const value = String(label || "").toLocaleLowerCase();
+  if (value.includes("kazandi") || value.includes("blackjack")) return "KAZANDIN 👑";
+  if (value.includes("kayip") || value.includes("bust")) return "KAYBETTIN ☠️";
+  if (value.includes("push")) return "PUSH";
+  return "";
 }
 
 function getBlackjackResultTone(label) {
@@ -1729,7 +1732,13 @@ function markAnimatingCards(keys) {
   state.animatingCardKeys = [...new Set([...state.animatingCardKeys, ...keys])];
   window.setTimeout(() => {
     state.animatingCardKeys = state.animatingCardKeys.filter((key) => !keys.includes(key));
-    render();
+    for (const key of keys) {
+      const [, cardId] = key.split(":");
+      const card = document.querySelector(`[data-card-id="${cssEscape(cardId)}"]`);
+      if (card) {
+        card.classList.remove("flip-in");
+      }
+    }
   }, 550);
 }
 
