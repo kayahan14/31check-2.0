@@ -20,9 +20,10 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const scopeKey = String(req.query.scopeKey || "local-preview");
+      const serverNowMs = Date.now();
       const session = await getCurrentDragonSession(scopeKey);
       const config = await getDragonConfig(scopeKey);
-      res.status(200).json({ ok: true, session, config });
+      res.status(200).json({ ok: true, session, config, serverNowMs });
       return;
     }
 
@@ -48,7 +49,8 @@ export default async function handler(req, res) {
       res.status(200).json({
         ok: true,
         session: result.session,
-        config: result.config
+        config: result.config,
+        serverNowMs: result.serverNowMs
       });
       return;
     }
@@ -89,7 +91,8 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     await saveDragonConfig(scopeKey, nextConfig, normalizedActor, now);
     return {
       session: current,
-      config: nextConfig
+      config: nextConfig,
+      serverNowMs: now
     };
   }
 
@@ -97,7 +100,8 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     if (action !== "start") {
       return {
         session: current,
-        config: currentConfig
+        config: currentConfig,
+        serverNowMs: now
       };
     }
 
@@ -105,7 +109,8 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     const session = await appendMessage(scopeKey, DRAGON_CHANNEL_ID, message);
     return {
       session,
-      config: currentConfig
+      config: currentConfig,
+      serverNowMs: now
     };
   }
 
@@ -118,13 +123,15 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
       return {
         session,
-        config: currentConfig
+        config: currentConfig,
+        serverNowMs: now
       };
     }
 
     return {
       session: current,
-      config: currentConfig
+      config: currentConfig,
+      serverNowMs: now
     };
   }
 
@@ -132,7 +139,8 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     if (getDragonPhase(game, now) !== "lobby") {
       return {
         session: { ...current, content: game },
-        config: currentConfig
+        config: currentConfig,
+        serverNowMs: now
       };
     }
 
@@ -142,13 +150,15 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
       return {
         session,
-        config: currentConfig
+        config: currentConfig,
+        serverNowMs: now
       };
     }
 
     return {
       session: { ...current, content: game },
-      config: currentConfig
+      config: currentConfig,
+      serverNowMs: now
     };
   }
 
@@ -156,7 +166,8 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     if (getDragonPhase(game, now) !== "playing") {
       return {
         session: { ...current, content: game },
-        config: currentConfig
+        config: currentConfig,
+        serverNowMs: now
       };
     }
 
@@ -164,7 +175,8 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     if (!participant || participant.status !== "joined") {
       return {
         session: { ...current, content: game },
-        config: currentConfig
+        config: currentConfig,
+        serverNowMs: now
       };
     }
 
@@ -177,7 +189,8 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
       return {
         session,
-        config: currentConfig
+        config: currentConfig,
+        serverNowMs: now
       };
     }
 
@@ -195,13 +208,15 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
     return {
       session,
-      config: currentConfig
+      config: currentConfig,
+      serverNowMs: now
     };
   }
 
   return {
     session: { ...current, content: game },
-    config: currentConfig
+    config: currentConfig,
+    serverNowMs: now
   };
 }
 

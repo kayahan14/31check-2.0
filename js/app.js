@@ -87,6 +87,8 @@ const state = {
   dragonSession: null,
   dragonStateLoading: true,
   dragonSessionSyncHandle: null,
+  dragonServerOffsetMs: 0,
+  dragonLastRealtimeAt: 0,
   dragonConfig: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   isMessagesLoading: true,
@@ -1735,7 +1737,7 @@ function renderDragonMessage(message) {
   const multiplier = phase === "playing"
     ? getDragonLiveMultiplier(game)
     : roundMultiplier(game.finalMultiplier || game.crashAtMultiplier || 1);
-  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
+  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - getDragonNow()) / 1000));
   const tone = game.status === "crashed" ? "is-loss" : cashedCount ? "is-win" : "";
   const statusLabel = phase === "lobby"
     ? `Alev ${secondsLeft}s sonra basliyor`
@@ -1804,7 +1806,7 @@ function renderDragonRealtimeView() {
   const phase = getDragonPhase(game);
   const participant = getDragonParticipant(game, state.currentUser.id);
   const joined = Boolean(participant);
-  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
+  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - getDragonNow()) / 1000));
   const multiplier = getDragonDisplayMultiplier(game, phase);
   const autoTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget);
   const collectible = participant?.status === "cashed_out"
@@ -1887,7 +1889,7 @@ function renderDragonModal() {
       ? roundCoinValue(game.baseStake * multiplier)
       : 0;
   const disabled = state.isMessagesLoading || Boolean(state.interactiveActionLocks[message.id]);
-  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
+  const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - getDragonNow()) / 1000));
   const joinedCount = (game.participants || []).length;
   const action = phase === "lobby"
     ? `<button type="button" class="btn dragon-modal-action" data-dragon-join data-message-id="${escapeAttr(message.id)}" ${disabled || joined ? "disabled" : ""}>${joined ? "Katildin" : "Katil"}</button>`
@@ -2060,6 +2062,7 @@ async function handleDragonHubAction(action, options = {}) {
       throw new Error("Dragon action failed.");
     }
     const payload = await response.json();
+    syncDragonServerClock(payload.serverNowMs);
     state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload.session || null);
     syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
     render();
@@ -2085,6 +2088,7 @@ async function loadDragonSession({ initial = false } = {}) {
     });
     if (!response.ok) return;
     const payload = await response.json();
+    syncDragonServerClock(payload.serverNowMs);
     state.dragonSession = mergeDragonSessionWithLocal(state.dragonSession, payload.session || null);
     syncDragonConfigFromServer(payload.config, { overwriteDraft: state.userModalView !== "dragon" });
   } catch (error) {
@@ -2125,6 +2129,7 @@ async function saveDragonConfig() {
       throw new Error("Dragon config save failed.");
     }
     const payload = await response.json();
+    syncDragonServerClock(payload.serverNowMs);
     syncDragonConfigFromServer(payload.config || config, { overwriteDraft: true });
     showToast("Ejderha ayarlari kaydedildi.");
     closeUserModal();
@@ -2155,6 +2160,7 @@ async function initializeDragonTransport() {
       .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => {
         const row = payload?.new || payload?.old;
         if (!isDragonRealtimeRow(row)) return;
+        state.dragonLastRealtimeAt = Date.now();
         void loadDragonSession();
       })
       .subscribe();
@@ -2169,8 +2175,9 @@ function startDragonSessionSync() {
 
   state.dragonSessionSyncHandle = window.setInterval(() => {
     if (!state.dragonSession && !isCasinoDragonView()) return;
+    if (state.dragonRealtimeChannel) return;
     void loadDragonSession();
-  }, 1000);
+  }, 5000);
 }
 
 function stopDragonSessionSync() {
@@ -2305,6 +2312,7 @@ function collectMinesWinnings(gameState) {
 
 function createDragonGameState() {
   const config = normalizeDragonConfig(state.dragonConfig);
+  const now = getDragonNow();
   return normalizeDragonState({
     game: "dragon",
     ownerId: state.currentUser.id,
@@ -2313,8 +2321,8 @@ function createDragonGameState() {
     status: "lobby",
     baseStake: DRAGON_BASE_STAKE,
     config,
-    launchAtMs: Date.now() + config.lobbyMs,
-    startedAtMs: Date.now() + config.lobbyMs,
+    launchAtMs: now + config.lobbyMs,
+    startedAtMs: now + config.lobbyMs,
     crashAtMultiplier: generateDragonCrashMultiplier(config),
     finalMultiplier: 1,
     collectible: 0,
@@ -2340,7 +2348,7 @@ function normalizeDragonState(content) {
   game.status ||= "lobby";
   game.baseStake = Number(game.baseStake) > 0 ? Number(game.baseStake) : DRAGON_BASE_STAKE;
   game.config = normalizeDragonConfig(game.config || state.dragonConfig);
-  game.launchAtMs = Number(game.launchAtMs) > 0 ? Number(game.launchAtMs) : Date.now() + game.config.lobbyMs;
+  game.launchAtMs = Number(game.launchAtMs) > 0 ? Number(game.launchAtMs) : getDragonNow() + game.config.lobbyMs;
   game.startedAtMs = Number(game.startedAtMs) > 0 ? Number(game.startedAtMs) : game.launchAtMs;
   game.crashAtMultiplier = Number(game.crashAtMultiplier) > 1 ? Number(game.crashAtMultiplier) : generateDragonCrashMultiplier(game.config);
   game.finalMultiplier = Number(game.finalMultiplier) > 0 ? Number(game.finalMultiplier) : 1;
@@ -3119,6 +3127,17 @@ function getDragonSessionRenderKey(session) {
   });
 }
 
+function syncDragonServerClock(serverNowMs) {
+  const numeric = Number(serverNowMs);
+  if (!Number.isFinite(numeric) || numeric <= 0) return;
+  const nextOffset = numeric - Date.now();
+  state.dragonServerOffsetMs = Math.round((state.dragonServerOffsetMs * 0.65) + (nextOffset * 0.35));
+}
+
+function getDragonNow() {
+  return Date.now() + Number(state.dragonServerOffsetMs || 0);
+}
+
 function getLocalClearTimestamp(scopeKey, channelId) {
   if (!scopeKey || !channelId) return 0;
   try {
@@ -3160,7 +3179,7 @@ function normalizeMessageTimestamp(message) {
   return 0;
 }
 
-function getDragonLiveMultiplier(gameState, now = Date.now()) {
+function getDragonLiveMultiplier(gameState, now = getDragonNow()) {
   const game = normalizeDragonState(gameState);
   if (game.status === "crashed") {
     return roundMultiplier(game.crashAtMultiplier || game.finalMultiplier || 1);
@@ -3206,7 +3225,7 @@ function applyOptimisticDragonCashout(session, userId, multiplier) {
   };
 }
 
-function shouldDragonCrash(gameState, now = Date.now()) {
+function shouldDragonCrash(gameState, now = getDragonNow()) {
   const game = normalizeDragonState(gameState);
   if (game.status === "crashed" || now < game.launchAtMs) return false;
 
@@ -3244,7 +3263,7 @@ function startDragonTicker() {
       const phase = getDragonPhase(game);
       if (phase === "finished" || game.status === "crashed") continue;
       if (state.interactiveActionLocks[message.id] || state.pendingUpdatedMessages[message.id]) continue;
-      if (phase === "lobby" && Date.now() >= game.launchAtMs) {
+      if (phase === "lobby" && getDragonNow() >= game.launchAtMs) {
         state.interactiveActionLocks[message.id] = true;
         void performDragonAction(message.id, "dragon_tick")
           .finally(() => {
@@ -3337,7 +3356,7 @@ function syncDragonModalLoop() {
       void handleDragonHubAction("cashout");
     }
     if (subtitleNode) {
-      const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
+      const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - getDragonNow()) / 1000));
       subtitleNode.textContent = phase === "lobby"
         ? `Baslangica ${secondsLeft}s var`
         : (game.resultSummary || "Ejderha oyunda");
@@ -3355,7 +3374,7 @@ function stopDragonModalLoop() {
   state.dragonModalRaf = 0;
 }
 
-function getDragonPhase(gameState, now = Date.now()) {
+function getDragonPhase(gameState, now = getDragonNow()) {
   const game = normalizeDragonState(gameState);
   if (game.status === "crashed") return "finished";
   if (now < game.launchAtMs) return "lobby";
