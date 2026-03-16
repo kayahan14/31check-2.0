@@ -97,7 +97,8 @@ const state = {
   dragonSession: null,
   dragonStateLoading: true,
   dragonSessionSyncHandle: null,
-  dragonServerOffsetMs: 0,
+  dragonServerClockLocalMs: 0,
+  dragonServerClockServerMs: 0,
   dragonRealtimeReady: false,
   dragonConfig: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
@@ -3261,12 +3262,29 @@ async function broadcastDragonTransportPayload(payload) {
 function syncDragonServerClock(serverNowMs) {
   const numeric = Number(serverNowMs);
   if (!Number.isFinite(numeric) || numeric <= 0) return;
-  const nextOffset = numeric - Date.now();
-  state.dragonServerOffsetMs = Math.round((state.dragonServerOffsetMs * 0.65) + (nextOffset * 0.35));
+  const localNow = getDragonMonotonicLocalNow();
+  const currentEstimate = getDragonNow(localNow);
+  const nextServerNow = state.dragonServerClockServerMs > 0
+    ? Math.max(numeric, currentEstimate)
+    : numeric;
+  state.dragonServerClockLocalMs = localNow;
+  state.dragonServerClockServerMs = nextServerNow;
 }
 
-function getDragonNow() {
-  return Date.now() + Number(state.dragonServerOffsetMs || 0);
+function getDragonMonotonicLocalNow() {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function getDragonNow(localNow = getDragonMonotonicLocalNow()) {
+  const anchorLocalMs = Number(state.dragonServerClockLocalMs || 0);
+  const anchorServerMs = Number(state.dragonServerClockServerMs || 0);
+  if (anchorLocalMs > 0 && anchorServerMs > 0) {
+    return anchorServerMs + Math.max(0, localNow - anchorLocalMs);
+  }
+  return Date.now();
 }
 
 function getLocalClearTimestamp(scopeKey, channelId) {
