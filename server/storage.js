@@ -319,7 +319,8 @@ function deserializeContent(content, type) {
     return content;
   }
 
-  if (!String(type || "").startsWith("blackjack")) {
+  const normalizedType = String(type || "");
+  if (!normalizedType.startsWith("blackjack") && !normalizedType.startsWith("mines")) {
     return content;
   }
 

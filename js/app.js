@@ -41,6 +41,9 @@ const BLACKJACK_SUITS = [
   { key: "clubs", symbol: "♣", color: "black" }
 ];
 const BLACKJACK_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+const MINES_GRID_SIZE = 9;
+const MINES_MINE_COUNT = 2;
+const MINES_BASE_STAKE = 100;
 
 const FALLBACK_MESSAGE = {
   id: uid(),
@@ -70,7 +73,7 @@ const state = {
   remoteSyncEpoch: 0,
   highlightedMessageId: "",
   animatingCardKeys: [],
-  blackjackActionLocks: {},
+  interactiveActionLocks: {},
   pendingUpdatedMessages: {},
   pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
@@ -557,7 +560,7 @@ function renderChannelLink(channel) {
 
 function renderMessages(messages) {
   return `<div class="message-stack">${messages.map((message) => `
-      <article class="message ${message.type === "game" ? "message-game" : ""} ${message.type === "blackjack" ? "message-blackjack" : ""} ${message.id === state.highlightedMessageId ? "message-highlighted" : ""} ${state.searchQuery.trim() ? "message-search-hit" : ""}" data-message-id="${escapeAttr(message.id)}">
+      <article class="message ${message.type === "game" ? "message-game" : ""} ${message.type === "blackjack" ? "message-blackjack" : ""} ${message.type === "mines" ? "message-mines" : ""} ${message.id === state.highlightedMessageId ? "message-highlighted" : ""} ${state.searchQuery.trim() ? "message-search-hit" : ""}" data-message-id="${escapeAttr(message.id)}">
         ${renderAvatar(message.avatarUrl, message.avatar || message.author)}
         <div class="message-body">
           <div class="message-meta">
@@ -645,6 +648,23 @@ function bindRuntimeUi() {
       const action = button.dataset.bjAction;
       if (!messageId || !action) return;
       await handleBlackjackAction(messageId, action);
+    });
+  });
+  app.querySelectorAll("[data-mines-cell]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const messageId = button.dataset.messageId;
+      const cellIndex = Number(button.dataset.minesCell);
+      if (!messageId || !Number.isInteger(cellIndex)) return;
+      await handleMinesReveal(messageId, cellIndex);
+    });
+  });
+  app.querySelectorAll("[data-mines-collect]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const messageId = button.dataset.messageId;
+      if (!messageId) return;
+      await handleMinesCollect(messageId);
     });
   });
 
@@ -803,6 +823,16 @@ async function sendGameMessage(game, label) {
     });
     appendLocalMessage(message);
     markAnimatingCards(getAllBlackjackCardKeys(message));
+    await persistMessage(message);
+    return;
+  }
+
+  if (game === "mines") {
+    const message = makeMessage({
+      type: "mines",
+      content: createMinesGameState()
+    });
+    appendLocalMessage(message);
     await persistMessage(message);
     return;
   }
@@ -1172,6 +1202,9 @@ function renderMessageContent(message) {
   if (message.type === "blackjack") {
     return renderBlackjackMessage(message);
   }
+  if (message.type === "mines") {
+    return renderMinesMessage(message);
+  }
 
   return `<div class="message-text">${highlightMultilineText(message.content, state.searchQuery)}</div>`;
 }
@@ -1261,7 +1294,7 @@ function renderPlayingCard(messageId, card) {
 }
 
 function renderBlackjackActionButton(messageId, action, enabled, ownerCanPlay) {
-  const disabled = !enabled || !ownerCanPlay;
+  const disabled = !enabled || !ownerCanPlay || Boolean(state.interactiveActionLocks[messageId]);
   const labels = {
     hit: "Hit",
     stand: "Stand",
@@ -1274,7 +1307,7 @@ function renderBlackjackActionButton(messageId, action, enabled, ownerCanPlay) {
 async function handleBlackjackAction(messageId, action) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "blackjack") return;
-  if (state.blackjackActionLocks[messageId]) return;
+  if (state.interactiveActionLocks[messageId]) return;
 
   const game = normalizeBlackjackState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status === "finished") return;
@@ -1289,11 +1322,11 @@ async function handleBlackjackAction(messageId, action) {
 
   markAnimatingCards(collectBlackjackCardChanges(message, nextMessage));
   state.remoteSyncEpoch += 1;
-  state.blackjackActionLocks[message.id] = true;
+  state.interactiveActionLocks[message.id] = true;
   state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
   await persistMessageUpdate(nextMessage);
-  delete state.blackjackActionLocks[message.id];
+  delete state.interactiveActionLocks[message.id];
   void loadPersistedMessages();
 }
 
@@ -1304,6 +1337,178 @@ function findActiveBlackjackMessageForCurrentUser() {
     const game = normalizeBlackjackState(message.content);
     return game.ownerId === state.currentUser.id && game.status !== "finished";
   }) || null;
+}
+
+function renderMinesMessage(message) {
+  const game = normalizeMinesState(message.content);
+  const ownerCanPlay = game.ownerId === state.currentUser.id;
+  const disabled = game.status !== "playing" || !ownerCanPlay || Boolean(state.interactiveActionLocks[message.id]);
+  const tone = getMinesResultTone(game.status);
+  const title = renderMinesTitle(game);
+  const stats = getMinesStats(game);
+
+  return `
+    <div class="mines-card">
+      <div class="mines-topbar">
+        <div class="mines-pill-row">${renderMinesPills(game)}</div>
+        ${title ? `<div class="mines-result ${tone ? `is-${tone}` : ""}">${escapeHtml(title)}</div>` : ""}
+      </div>
+      <div class="mines-board">
+        ${game.cells.map((cell, index) => renderMinesCell(message.id, cell, index, disabled)).join("")}
+      </div>
+      <div class="mines-footer">
+        <div class="mines-stat">
+          <span class="mines-label">Collectable</span>
+          <strong>${escapeHtml(formatCoinValue(stats.collectable))}</strong>
+        </div>
+        <div class="mines-stat">
+          <span class="mines-label">Carpan</span>
+          <strong>${escapeHtml(formatMultiplier(game.multiplier))}</strong>
+        </div>
+        <button type="button" class="btn mines-collect ${tone ? `is-${tone}` : ""}" data-mines-collect data-message-id="${escapeAttr(message.id)}" ${game.status !== "playing" || disabled || game.revealedSafeCount === 0 ? "disabled" : ""}>Collect</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderMinesPills(game) {
+  const nextMultipliers = getNextMinesMultipliers(game).slice(0, 5);
+  return nextMultipliers.map((value, index) => `<span class="mines-pill ${index === 0 ? "is-current" : ""}">${escapeHtml(formatMultiplier(value))}</span>`).join("");
+}
+
+function renderMinesCell(messageId, cell, index, disabled) {
+  const revealed = cell.revealed || false;
+  const cellClass = revealed
+    ? cell.isMine ? "is-mine" : "is-safe"
+    : "";
+  const content = revealed ? (cell.isMine ? "💣" : "💎") : "";
+  return `<button type="button" class="mines-cell ${cellClass}" data-mines-cell="${index}" data-message-id="${escapeAttr(messageId)}" ${disabled || revealed ? "disabled" : ""}>${content}</button>`;
+}
+
+async function handleMinesReveal(messageId, cellIndex) {
+  const message = findMessageById(messageId);
+  if (!message || message.type !== "mines") return;
+  if (state.interactiveActionLocks[messageId]) return;
+
+  const game = normalizeMinesState(message.content);
+  if (game.ownerId !== state.currentUser.id || game.status !== "playing") return;
+
+  const nextGame = revealMinesCell(game, cellIndex);
+  if (!nextGame) return;
+
+  await persistInteractiveGameUpdate(message, nextGame);
+}
+
+async function handleMinesCollect(messageId) {
+  const message = findMessageById(messageId);
+  if (!message || message.type !== "mines") return;
+  if (state.interactiveActionLocks[messageId]) return;
+
+  const game = normalizeMinesState(message.content);
+  if (game.ownerId !== state.currentUser.id || game.status !== "playing" || game.revealedSafeCount === 0) return;
+
+  const nextGame = collectMinesWinnings(game);
+  await persistInteractiveGameUpdate(message, nextGame);
+}
+
+async function persistInteractiveGameUpdate(message, nextContent) {
+  const nextMessage = {
+    ...message,
+    content: nextContent
+  };
+
+  state.remoteSyncEpoch += 1;
+  state.interactiveActionLocks[message.id] = true;
+  state.pendingUpdatedMessages[message.id] = nextMessage;
+  replaceLocalMessage(nextMessage);
+  await persistMessageUpdate(nextMessage);
+  delete state.interactiveActionLocks[message.id];
+  void loadPersistedMessages();
+}
+
+function createMinesGameState() {
+  const cells = Array.from({ length: MINES_GRID_SIZE }, (_, index) => ({
+    id: uid(),
+    index,
+    isMine: false,
+    revealed: false
+  }));
+
+  const mineIndexes = shuffle(Array.from({ length: MINES_GRID_SIZE }, (_, index) => index)).slice(0, MINES_MINE_COUNT);
+  for (const mineIndex of mineIndexes) {
+    cells[mineIndex].isMine = true;
+  }
+
+  return normalizeMinesState({
+    game: "mines",
+    ownerId: state.currentUser.id,
+    ownerName: state.currentUser.displayName,
+    revision: 1,
+    status: "playing",
+    baseStake: MINES_BASE_STAKE,
+    mineCount: MINES_MINE_COUNT,
+    revealedSafeCount: 0,
+    multiplier: 1,
+    collectible: MINES_BASE_STAKE,
+    resultSummary: "",
+    cells
+  });
+}
+
+function normalizeMinesState(content) {
+  const game = typeof content === "string" ? JSON.parse(content) : cloneData(content);
+  game.game ||= "mines";
+  game.ownerId ||= state.currentUser.id;
+  game.ownerName ||= state.currentUser.displayName;
+  game.revision = Number(game.revision) > 0 ? Number(game.revision) : 1;
+  game.status ||= "playing";
+  game.baseStake = Number(game.baseStake) > 0 ? Number(game.baseStake) : MINES_BASE_STAKE;
+  game.mineCount = Number(game.mineCount) > 0 ? Number(game.mineCount) : MINES_MINE_COUNT;
+  game.cells = Array.isArray(game.cells) ? game.cells : [];
+  game.revealedSafeCount = Number(game.revealedSafeCount) >= 0 ? Number(game.revealedSafeCount) : countRevealedMinesSafeCells(game.cells);
+  game.multiplier = Number(game.multiplier) > 0 ? Number(game.multiplier) : calculateMinesMultiplier(game.revealedSafeCount, game.mineCount, game.cells.length || MINES_GRID_SIZE);
+  game.collectible = Number(game.collectible) > 0 ? Number(game.collectible) : Math.round(game.baseStake * game.multiplier);
+  game.resultSummary ||= "";
+  return game;
+}
+
+function revealMinesCell(gameState, cellIndex) {
+  const game = normalizeMinesState(gameState);
+  if (game.status !== "playing") return null;
+  const cell = game.cells[cellIndex];
+  if (!cell || cell.revealed) return null;
+
+  game.revision += 1;
+  cell.revealed = true;
+
+  if (cell.isMine) {
+    game.status = "lost";
+    game.resultSummary = "KAYBETTIN ☠️";
+    revealAllMines(game.cells);
+    return game;
+  }
+
+  game.revealedSafeCount += 1;
+  game.multiplier = calculateMinesMultiplier(game.revealedSafeCount, game.mineCount, game.cells.length || MINES_GRID_SIZE);
+  game.collectible = roundCoinValue(game.baseStake * game.multiplier);
+
+  const safeCells = (game.cells.length || MINES_GRID_SIZE) - game.mineCount;
+  if (game.revealedSafeCount >= safeCells) {
+    game.status = "won";
+    game.resultSummary = "KAZANDIN 👑";
+    revealAllMines(game.cells);
+  }
+
+  return game;
+}
+
+function collectMinesWinnings(gameState) {
+  const game = normalizeMinesState(gameState);
+  game.revision += 1;
+  game.status = "cashed_out";
+  game.resultSummary = "KAZANDIN 👑";
+  revealAllMines(game.cells);
+  return game;
 }
 
 function createBlackjackGameState() {
@@ -1675,6 +1880,79 @@ function renderDealerTotal(game) {
   return `Toplam: ${calculateHandTotals(game.dealer.cards).best}`;
 }
 
+function getMinesStats(game) {
+  return {
+    collectable: game.collectible,
+    multiplier: game.multiplier
+  };
+}
+
+function getNextMinesMultipliers(game) {
+  const totalCells = game.cells.length || MINES_GRID_SIZE;
+  const safeCells = totalCells - game.mineCount;
+  const values = [game.multiplier];
+  for (let step = game.revealedSafeCount + 1; step <= Math.min(safeCells, game.revealedSafeCount + 4); step += 1) {
+    values.push(calculateMinesMultiplier(step, game.mineCount, totalCells));
+  }
+  return values;
+}
+
+function calculateMinesMultiplier(revealedSafeCount, mineCount, totalCells = MINES_GRID_SIZE) {
+  const safeCells = totalCells - mineCount;
+  if (revealedSafeCount <= 0) return 1;
+
+  let multiplier = 1;
+  for (let index = 0; index < revealedSafeCount; index += 1) {
+    multiplier *= (totalCells - index) / (safeCells - index);
+  }
+  return multiplier;
+}
+
+function countRevealedMinesSafeCells(cells) {
+  return (cells || []).filter((cell) => cell.revealed && !cell.isMine).length;
+}
+
+function revealAllMines(cells) {
+  for (const cell of cells || []) {
+    if (cell.isMine) {
+      cell.revealed = true;
+    }
+  }
+}
+
+function formatMultiplier(value) {
+  return `${Number(value || 1).toFixed(2)}x`;
+}
+
+function formatCoinValue(value) {
+  return `${roundCoinValue(value)} coin`;
+}
+
+function roundCoinValue(value) {
+  return Math.round(Number(value || 0));
+}
+
+function renderMinesTitle(game) {
+  if (game.status === "lost") return "KAYBETTIN ☠️";
+  if (game.status === "won" || game.status === "cashed_out") return "KAZANDIN 👑";
+  return "";
+}
+
+function getMinesResultTone(status) {
+  if (status === "lost") return "loss";
+  if (status === "won" || status === "cashed_out") return "win";
+  return "";
+}
+
+function shuffle(values) {
+  const list = [...values];
+  for (let index = list.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
+  }
+  return list;
+}
+
 function decorateBlackjackSummary(summary) {
   return String(summary || "")
     .replaceAll("Kayip", "KAYBETTIN ☠️")
@@ -1782,7 +2060,7 @@ function hasMeaningfulMessageDifference(currentMessage, nextMessage) {
 }
 
 function hasActiveBlackjackInteraction() {
-  return Object.keys(state.blackjackActionLocks || {}).length > 0 || Object.keys(state.pendingUpdatedMessages || {}).length > 0;
+  return Object.keys(state.interactiveActionLocks || {}).length > 0 || Object.keys(state.pendingUpdatedMessages || {}).length > 0;
 }
 
 function normalizeMessageTimestamp(message) {
@@ -1812,6 +2090,17 @@ function getSearchableMessageText(message) {
       game.resultSummary,
       ...(game.hands || []).map((hand) => hand.resultLabel),
       ...(game.hands || []).flatMap((hand) => (hand.cards || []).map((card) => `${card.rank} ${card.suit}`))
+    ].join(" ");
+  }
+
+  if (message.type === "mines") {
+    const game = normalizeMinesState(message.content);
+    return [
+      "mines",
+      game.ownerName,
+      game.resultSummary,
+      formatCoinValue(game.collectible),
+      formatMultiplier(game.multiplier)
     ].join(" ");
   }
 
