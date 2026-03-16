@@ -3368,10 +3368,6 @@ function applyOptimisticDragonCashout(session, userId, multiplier) {
   participant.status = "cashed_out";
   participant.cashoutMultiplier = roundMultiplier(multiplier || getDragonLiveMultiplier(game));
   participant.cashoutValue = roundCoinValue(game.baseStake * participant.cashoutMultiplier);
-  if ((game.participants || []).every((entry) => entry.status !== "joined")) {
-    game.acceleratedFromEffectiveElapsed = getDragonEffectiveElapsed(game, getDragonNow());
-    game.acceleratedAtMs = getDragonNow();
-  }
   game.revision += 1;
   game.finalMultiplier = participant.cashoutMultiplier;
 
