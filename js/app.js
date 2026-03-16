@@ -3,7 +3,7 @@
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const MOCK_MODE = new URLSearchParams(window.location.search).get("mock") === "1" || !DISCORD_CLIENT_ID;
 const ADMIN_USER_IDS = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USER_IDS || "");
-const ADMIN_USERNAMES = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USERNAMES || "kayahan14");
+const ADMIN_USERNAMES = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USERNAMES || "astrian");
 
 const DEFAULT_CHANNELS = [
   { id: "1", name: "🔥🍕-3️⃣ 1️⃣-🍕🔥", categoryId: "" },
@@ -34,7 +34,6 @@ const GAME_BUTTONS = [
   { id: "case", label: "🎁 Kasa", game: "case" }
 ];
 
-const BLACKJACK_RULE_LABEL = "Kural seti: 6 deste, blackjack sadece ilk elde, dealer soft 17'de bekler, split aslarda tek kart ve blackjack sayilmaz.";
 const BLACKJACK_SUITS = [
   { key: "spades", symbol: "♠", color: "black" },
   { key: "hearts", symbol: "♥", color: "red" },
@@ -61,6 +60,8 @@ const state = {
   messageSyncHandle: null,
   composerDraft: "",
   searchQuery: "",
+  sidebarCollapsed: false,
+  toastMessage: "",
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
   forceScrollToBottom: false,
@@ -97,6 +98,7 @@ const categoryList = document.getElementById("categoryList");
 const userModalTag = document.getElementById("userModalTag");
 const adminBadge = document.getElementById("adminBadge");
 const tabs = [...document.querySelectorAll(".tab")];
+let toastTimeoutHandle = 0;
 
 bootstrap();
 
@@ -398,9 +400,15 @@ function render() {
   const rawMessages = state.messagesByChannel[channel?.id] || [];
   const messages = filterMessages(rawMessages, state.searchQuery);
 
-  app.className = "app";
+  app.className = `app ${state.sidebarCollapsed ? "sidebar-collapsed" : ""}`.trim();
   app.innerHTML = `
     <aside class="sidebar">
+      <div class="sidebar-top">
+        <button type="button" class="sidebar-toggle" id="sidebarToggleButton" aria-label="${state.sidebarCollapsed ? "Metin kanallarını geri getir" : "Metin kanallarını küçült"}" aria-expanded="${state.sidebarCollapsed ? "false" : "true"}">
+          ${icon(state.sidebarCollapsed ? "chevron-right" : "chevron-left", 16)}
+          <span class="sidebar-toggle-label">${state.sidebarCollapsed ? "Geri Getir" : "Küçült"}</span>
+        </button>
+      </div>
       <div class="sidebar-scroll">
         <div class="runtime-banner">${escapeHtml(state.runtimeNote)}</div>
         ${renderChannelSections()}
@@ -447,6 +455,7 @@ function render() {
         </aside>
       </div>
     </main>
+    ${renderToast()}
   `;
 
   bindRuntimeUi();
@@ -494,7 +503,7 @@ function renderChannelSections() {
 }
 
 function renderChannelLink(channel) {
-  return `<a class="channel ${channel.id === state.selectedChannelId ? "active" : ""}" href="${channelHref(channel.id)}" data-channel-id="${channel.id}">${icon("hash", 20)}<span>${escapeHtml(channel.name)}</span></a>`;
+  return `<a class="channel ${channel.id === state.selectedChannelId ? "active" : ""}" href="${channelHref(channel.id)}" data-channel-id="${channel.id}">${icon("hash", 20)}<span class="channel-label">${escapeHtml(channel.name)}</span></a>`;
 }
 
 function renderMessages(messages) {
@@ -550,6 +559,13 @@ function renderMemberRow(member) {
 }
 
 function bindRuntimeUi() {
+  const sidebarToggleButton = document.getElementById("sidebarToggleButton");
+  if (sidebarToggleButton) {
+    sidebarToggleButton.addEventListener("click", () => {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+      render();
+    });
+  }
   app.querySelectorAll("[data-channel-id]").forEach((link) => link.addEventListener("click", (event) => {
     event.preventDefault();
     selectChannel(link.dataset.channelId);
@@ -709,6 +725,10 @@ async function submitMessage(content) {
 
 async function sendGameMessage(game, label) {
   if (game === "blackjack") {
+    if (findActiveBlackjackMessageForCurrentUser()) {
+      showToast("Önce aktif oyununu bitir.");
+      return;
+    }
     const message = makeMessage({
       type: "blackjack",
       content: createBlackjackGameState()
@@ -966,6 +986,21 @@ function focusMessage(messageId) {
   });
 }
 
+function renderToast() {
+  if (!state.toastMessage) return "";
+  return `<div class="toast" role="status" aria-live="polite">${escapeHtml(state.toastMessage)}</div>`;
+}
+
+function showToast(message) {
+  state.toastMessage = message;
+  render();
+  window.clearTimeout(toastTimeoutHandle);
+  toastTimeoutHandle = window.setTimeout(() => {
+    state.toastMessage = "";
+    render();
+  }, 2200);
+}
+
 function isNearBottom(element) {
   if (!element) return true;
   const threshold = 24;
@@ -1042,18 +1077,37 @@ function renderMessageContent(message) {
   return `<div class="message-text">${highlightMultilineText(message.content, state.searchQuery)}</div>`;
 }
 
+function getBlackjackStatusLine(game, activeHand, ownerCanPlay) {
+  if (game.status === "finished") {
+    return decorateBlackjackSummary(game.resultSummary);
+  }
+
+  if (!ownerCanPlay) {
+    return `${game.ownerName} oynuyor`;
+  }
+
+  if (activeHand?.isSplitHand) {
+    return `El ${game.activeHandIndex + 1} sirada`;
+  }
+
+  return "Hamleni sec";
+}
+
 function renderBlackjackMessage(message) {
   const game = normalizeBlackjackState(message.content);
   const ownerCanPlay = game.ownerId === state.currentUser.id;
   const activeHand = game.hands[game.activeHandIndex] || null;
   const actions = getBlackjackActions(game, activeHand);
   const resultTone = getBlackjackResultTone(game.resultSummary);
+  const statusLine = game.status === "finished"
+    ? decorateBlackjackSummary(game.resultSummary)
+    : getBlackjackStatusLine(game, activeHand, ownerCanPlay);
 
   return `
     <div class="blackjack-card">
       <div class="blackjack-summary">
         <div class="blackjack-summary-main">${highlightText(game.summary, state.searchQuery)}</div>
-        <div class="blackjack-summary-sub ${resultTone ? `is-${resultTone}` : ""}">${escapeHtml(game.status === "finished" ? decorateBlackjackSummary(game.resultSummary) : BLACKJACK_RULE_LABEL)}</div>
+        ${statusLine ? `<div class="blackjack-summary-sub ${resultTone ? `is-${resultTone}` : ""}">${escapeHtml(statusLine)}</div>` : ""}
       </div>
       <div class="blackjack-table">
         <section class="blackjack-seat">
@@ -1066,10 +1120,10 @@ function renderBlackjackMessage(message) {
         </section>
       </div>
       <div class="blackjack-controls">
-        ${renderBlackjackActionButton(message.id, "hit", "Hit", actions.hit, ownerCanPlay)}
-        ${renderBlackjackActionButton(message.id, "stand", "Stand", actions.stand, ownerCanPlay)}
-        ${renderBlackjackActionButton(message.id, "double", "Double", actions.double, ownerCanPlay)}
-        ${renderBlackjackActionButton(message.id, "split", "Split", actions.split, ownerCanPlay)}
+        ${renderBlackjackActionButton(message.id, "hit", actions.hit, ownerCanPlay)}
+        ${renderBlackjackActionButton(message.id, "stand", actions.stand, ownerCanPlay)}
+        ${renderBlackjackActionButton(message.id, "double", actions.double, ownerCanPlay)}
+        ${renderBlackjackActionButton(message.id, "split", actions.split, ownerCanPlay)}
       </div>
     </div>
   `;
@@ -1112,9 +1166,15 @@ function renderPlayingCard(messageId, card) {
   `;
 }
 
-function renderBlackjackActionButton(messageId, action, label, enabled, ownerCanPlay) {
-  const disabled = !enabled || !ownerCanPlay;
-  return `<button type="button" class="btn btn-secondary blackjack-action" data-bj-action="${action}" data-message-id="${escapeAttr(messageId)}" ${disabled ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+function renderBlackjackActionButton(messageId, action, enabled, ownerCanPlay) {
+  const disabled = !enabled || !ownerCanPlay || Boolean(state.pendingUpdatedMessages[messageId]);
+  const labels = {
+    hit: "Hit",
+    stand: "Stand",
+    double: "2x Double",
+    split: "Split"
+  };
+  return `<button type="button" class="btn blackjack-action is-${action}" data-bj-action="${action}" data-message-id="${escapeAttr(messageId)}" ${disabled ? "disabled" : ""}>${escapeHtml(labels[action] || action)}</button>`;
 }
 
 async function handleBlackjackAction(messageId, action) {
@@ -1136,6 +1196,15 @@ async function handleBlackjackAction(messageId, action) {
   state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
   await persistMessageUpdate(nextMessage);
+}
+
+function findActiveBlackjackMessageForCurrentUser() {
+  const messages = Object.values(state.messagesByChannel).flat();
+  return messages.find((message) => {
+    if (message?.type !== "blackjack") return false;
+    const game = normalizeBlackjackState(message.content);
+    return game.ownerId === state.currentUser.id && game.status !== "finished";
+  }) || null;
 }
 
 function createBlackjackGameState() {
@@ -1779,6 +1848,7 @@ function icon(name, size = 24, className = "") {
     smile: '<circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line>',
     verified: '<path d="M21.801 10A10 10 0 1 1 17 3.335"></path><path d="m9 11 3 3L22 4"></path>',
     "chevron-down": '<path d="m6 9 6 6 6-6"></path>',
+    "chevron-left": '<path d="m15 18-6-6 6-6"></path>',
     "chevron-right": '<path d="m9 18 6-6-6-6"></path>',
     trash: '<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>',
     edit: '<path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"></path>',
