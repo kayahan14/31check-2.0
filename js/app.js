@@ -995,14 +995,14 @@ async function persistMessageUpdate(message) {
     }
 
     const payload = await response.json();
-    delete state.pendingUpdatedMessages[message.id];
+    clearPendingUpdatedMessageIfCurrent(message);
     const storedMessage = payload.message || message;
     if (hasMeaningfulMessageDifference(findMessageById(message.id), storedMessage)) {
       replaceLocalMessage(storedMessage);
     }
     return storedMessage;
   } catch (error) {
-    delete state.pendingUpdatedMessages[message.id];
+    clearPendingUpdatedMessageIfCurrent(message);
     console.warn("Message update failed.", error);
     return null;
   }
@@ -1435,7 +1435,7 @@ function findActiveBlackjackMessageForCurrentUser() {
 function renderMinesMessage(message) {
   const game = normalizeMinesState(message.content);
   const ownerCanPlay = game.ownerId === state.currentUser.id;
-  const disabled = state.isMessagesLoading || game.status !== "playing" || !ownerCanPlay || Boolean(state.interactiveActionLocks[message.id]);
+  const disabled = state.isMessagesLoading || game.status !== "playing" || !ownerCanPlay;
   const tone = getMinesResultTone(game.status);
   const title = renderMinesTitle(game);
   const stats = getMinesStats(game);
@@ -1476,7 +1476,9 @@ function renderMinesPills(game) {
 function renderMinesCell(messageId, cell, index, disabled) {
   const revealed = cell.revealed || false;
   const cellClass = revealed
-    ? cell.isMine ? "is-mine" : "is-safe"
+    ? cell.isMine
+      ? index === Number(cell.detonatedAtIndex) ? "is-mine is-detonated" : "is-mine"
+      : "is-safe"
     : "";
   const content = revealed ? (cell.isMine ? "💣" : "💎") : "";
   return `<button type="button" class="mines-cell ${cellClass}" data-mines-cell="${index}" data-message-id="${escapeAttr(messageId)}" ${disabled || revealed ? "disabled" : ""}>${content}</button>`;
@@ -1485,7 +1487,7 @@ function renderMinesCell(messageId, cell, index, disabled) {
 async function handleMinesReveal(messageId, cellIndex) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
-  if (state.isMessagesLoading || state.interactiveActionLocks[messageId]) return;
+  if (state.isMessagesLoading) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing") return;
@@ -1499,7 +1501,7 @@ async function handleMinesReveal(messageId, cellIndex) {
 async function handleMinesCollect(messageId) {
   const message = findMessageById(messageId);
   if (!message || message.type !== "mines") return;
-  if (state.isMessagesLoading || state.interactiveActionLocks[messageId]) return;
+  if (state.isMessagesLoading) return;
 
   const game = normalizeMinesState(message.content);
   if (game.ownerId !== state.currentUser.id || game.status !== "playing" || game.revealedSafeCount === 0) return;
@@ -1515,7 +1517,6 @@ async function persistInteractiveGameUpdate(message, nextContent) {
   };
 
   state.remoteSyncEpoch += 1;
-  state.interactiveActionLocks[message.id] = true;
   state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
   const previousQueue = interactivePersistQueues[message.id] || Promise.resolve();
@@ -1529,7 +1530,6 @@ async function persistInteractiveGameUpdate(message, nextContent) {
     if (interactivePersistQueues[message.id] === nextQueue) {
       delete interactivePersistQueues[message.id];
     }
-    delete state.interactiveActionLocks[message.id];
   });
   void loadPersistedMessages();
 }
@@ -1577,6 +1577,11 @@ function normalizeMinesState(content) {
   game.revealedSafeCount = Number(game.revealedSafeCount) >= 0 ? Number(game.revealedSafeCount) : countRevealedMinesSafeCells(game.cells);
   game.multiplier = Number(game.multiplier) > 0 ? Number(game.multiplier) : calculateMinesMultiplier(game.revealedSafeCount, game.mineCount, game.cells.length || MINES_GRID_SIZE);
   game.collectible = Number(game.collectible) > 0 ? Number(game.collectible) : Math.round(game.baseStake * game.multiplier);
+  game.detonatedCellIndex = Number.isInteger(Number(game.detonatedCellIndex)) ? Number(game.detonatedCellIndex) : -1;
+  game.cells = game.cells.map((cell, index) => ({
+    ...cell,
+    detonatedAtIndex: Number.isInteger(Number(cell?.detonatedAtIndex)) ? Number(cell.detonatedAtIndex) : (index === game.detonatedCellIndex ? index : -1)
+  }));
   game.resultSummary ||= "";
   return game;
 }
@@ -1592,6 +1597,8 @@ function revealMinesCell(gameState, cellIndex) {
 
   if (cell.isMine) {
     game.status = "lost";
+    game.detonatedCellIndex = cellIndex;
+    cell.detonatedAtIndex = cellIndex;
     game.resultSummary = "KAYBETTIN ☠️";
     revealAllMines(game.cells);
     return game;
@@ -2161,6 +2168,24 @@ function findMessageById(messageId) {
     if (message) return message;
   }
   return null;
+}
+
+function clearPendingUpdatedMessageIfCurrent(message) {
+  const pending = state.pendingUpdatedMessages[message.id];
+  if (!pending) return;
+  if (getMessageRevision(pending) <= getMessageRevision(message)) {
+    delete state.pendingUpdatedMessages[message.id];
+  }
+}
+
+function getMessageRevision(message) {
+  if (!message?.content) return 0;
+  try {
+    const content = typeof message.content === "string" ? JSON.parse(message.content) : message.content;
+    return Number(content?.revision) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 function hasMeaningfulMessageDifference(currentMessage, nextMessage) {
