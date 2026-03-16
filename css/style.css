@@ -1050,6 +1050,114 @@ svg { display: block; }
 .dragon-screen .dragon-modal-scene {
   min-height: 320px;
 }
+.dragon-hub-scene {
+  min-height: 360px;
+  background:
+    radial-gradient(circle at 58% 50%, rgba(255, 173, 78, 0.2), transparent 18%),
+    radial-gradient(circle at 30% 48%, rgba(255, 112, 57, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(79, 36, 117, 0.62), rgba(35, 22, 54, 0.95));
+}
+.dragon-hub-scene .dragon-hub-dragon {
+  left: 14%;
+  font-size: 110px;
+  z-index: 2;
+}
+.dragon-hub-scene .dragon-modal-fire {
+  left: 28%;
+  top: 50%;
+  gap: 10px;
+  z-index: 1;
+}
+.dragon-hub-scene .dragon-modal-fire span {
+  width: 90px;
+  height: 22px;
+  opacity: 0.5;
+  filter: blur(1px);
+  background: linear-gradient(90deg, rgba(255, 243, 171, 0.95), rgba(255, 147, 59, 0.92), rgba(255, 83, 37, 0.88));
+  box-shadow: 0 0 22px rgba(255, 126, 45, 0.28);
+}
+.dragon-flame-meter {
+  position: absolute;
+  left: 58%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 180px;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  pointer-events: none;
+}
+.dragon-flame-core {
+  position: absolute;
+  inset: 18px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgba(255, 248, 187, 0.95) 0%, rgba(255, 185, 88, 0.82) 38%, rgba(255, 112, 47, 0.3) 68%, rgba(255, 77, 41, 0) 100%);
+  filter: blur(4px);
+  opacity: 0.92;
+}
+.dragon-scene-multiplier {
+  position: relative;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  color: #fff7d1;
+  font-size: 42px;
+  line-height: 1;
+  text-shadow: 0 3px 20px rgba(0, 0, 0, 0.42), 0 0 18px rgba(255, 157, 69, 0.55);
+}
+.dragon-auto-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.dragon-auto-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dragon-auto-copy strong {
+  color: #fff1b6;
+  font-size: 18px;
+  font-weight: 900;
+}
+.dragon-auto-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dragon-auto-input {
+  width: 110px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(11, 12, 18, 0.72);
+  color: var(--text-main);
+  font-size: 15px;
+  font-weight: 800;
+}
+.dragon-auto-toggle {
+  min-width: 98px;
+  min-height: 42px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 900;
+}
+.dragon-auto-toggle.is-active {
+  background: linear-gradient(180deg, #7de59d, #33a664);
+  color: #092111;
+}
 .dragon-hub-empty {
   display: flex;
   flex-direction: column;
@@ -1472,6 +1580,35 @@ svg { display: block; }
   .playing-card {
     width: 42px;
     height: 60px;
+  }
+  .dragon-auto-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dragon-auto-controls {
+    width: 100%;
+  }
+  .dragon-auto-input,
+  .dragon-auto-toggle {
+    flex: 1;
+  }
+  .dragon-hub-scene .dragon-hub-dragon {
+    left: 10%;
+    font-size: 88px;
+  }
+  .dragon-hub-scene .dragon-modal-fire {
+    left: 24%;
+  }
+  .dragon-hub-scene .dragon-modal-fire span {
+    width: 64px;
+  }
+  .dragon-flame-meter {
+    width: 140px;
+    height: 140px;
+    left: 60%;
+  }
+  .dragon-scene-multiplier {
+    font-size: 32px;
   }
 }
 

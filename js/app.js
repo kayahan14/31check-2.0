@@ -54,6 +54,7 @@ const DRAGON_BASE_STAKE = 100;
 const DRAGON_TICK_MS = 400;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
+const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
 const DRAGON_CHANNEL_ID = "casino:dragon";
 
 const FALLBACK_MESSAGE = {
@@ -65,6 +66,8 @@ const FALLBACK_MESSAGE = {
   type: "text",
   content: "Peder\n\nTOPLAM 31 SÜRESİ: 11950\nTOPLAM 31 ADETİ: 273\nTEZGAH KAR/ZARAR: -888\nTOPLAM RNG: 39\nASUMAN KAR/ZARAR: 1773\nLEVEL: 236\nXP: 35\nPET: Azdırıan"
 };
+
+const dragonAutoCashoutPreference = loadDragonAutoCashoutPreference();
 
 const state = {
   discordSdk: null,
@@ -87,6 +90,8 @@ const state = {
   dragonModalMessageId: "",
   dragonModalRaf: 0,
   preferredMineCount: loadPreferredMineCount(),
+  dragonAutoCashoutEnabled: dragonAutoCashoutPreference.enabled,
+  dragonAutoCashoutTarget: dragonAutoCashoutPreference.target,
   toastMessage: "",
   keepComposerFocus: false,
   messagePanePinnedToBottom: true,
@@ -764,6 +769,26 @@ function bindRuntimeUi() {
       await handleDragonHubAction(action);
     });
   });
+  const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
+  if (dragonAutoInput) {
+    const syncDragonAutoTarget = () => {
+      const nextTarget = normalizeDragonAutoCashoutTarget(dragonAutoInput.value);
+      state.dragonAutoCashoutTarget = nextTarget;
+      dragonAutoInput.value = nextTarget.toFixed(2);
+      saveDragonAutoCashoutPreference();
+      render();
+    };
+    dragonAutoInput.addEventListener("change", syncDragonAutoTarget);
+    dragonAutoInput.addEventListener("blur", syncDragonAutoTarget);
+  }
+  const dragonAutoToggle = document.getElementById("dragonAutoCashoutToggle");
+  if (dragonAutoToggle) {
+    dragonAutoToggle.addEventListener("click", () => {
+      state.dragonAutoCashoutEnabled = !state.dragonAutoCashoutEnabled;
+      saveDragonAutoCashoutPreference();
+      render();
+    });
+  }
   app.querySelectorAll("[data-open-dragon-modal]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1662,6 +1687,7 @@ function renderDragonRealtimeView() {
   const joined = Boolean(participant);
   const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
   const multiplier = phase === "playing" ? getDragonLiveMultiplier(game) : roundMultiplier(game.finalMultiplier || 1);
+  const autoTarget = normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget);
   const collectible = participant?.status === "cashed_out"
     ? participant.cashoutValue
     : phase === "playing" && participant?.status === "joined"
@@ -1683,11 +1709,14 @@ function renderDragonRealtimeView() {
             <div class="dragon-modal-title">Ejderha</div>
             <div class="dragon-modal-subtitle" data-dragon-live-subtitle>${escapeHtml(phase === "lobby" ? `Baslangica ${secondsLeft}s var` : (game.resultSummary || "Ejderha oyunda"))}</div>
           </div>
-          <div class="dragon-modal-multiplier" data-dragon-live-multiplier>${escapeHtml(formatMultiplier(multiplier))}</div>
         </div>
-        <div class="dragon-modal-scene ${phase === "playing" ? "is-live" : ""} ${game.status === "crashed" ? "is-crashed" : ""}">
-          <div class="dragon-modal-dragon">${game.status === "crashed" ? "💥" : "🐉"}</div>
+        <div class="dragon-modal-scene dragon-hub-scene ${phase === "playing" ? "is-live" : ""} ${game.status === "crashed" ? "is-crashed" : ""}">
+          <div class="dragon-modal-dragon dragon-hub-dragon">${game.status === "crashed" ? "💥" : "🐉"}</div>
           <div class="dragon-modal-fire" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div class="dragon-flame-meter">
+            <div class="dragon-flame-core"></div>
+            <div class="dragon-modal-multiplier dragon-scene-multiplier" data-dragon-live-multiplier>${escapeHtml(formatMultiplier(multiplier))}</div>
+          </div>
         </div>
         <div class="dragon-modal-stats">
           <div class="dragon-stat">
@@ -1704,6 +1733,16 @@ function renderDragonRealtimeView() {
           </div>
         </div>
         <div class="dragon-modal-actions">${action}</div>
+        <div class="dragon-auto-panel">
+          <div class="dragon-auto-copy">
+            <span class="dragon-label">Oto su degerde cek</span>
+            <strong>${escapeHtml(formatMultiplier(autoTarget))}</strong>
+          </div>
+          <div class="dragon-auto-controls">
+            <input id="dragonAutoCashoutInput" class="dragon-auto-input" type="number" min="1.01" step="0.01" value="${escapeAttr(autoTarget.toFixed(2))}">
+            <button type="button" class="btn dragon-auto-toggle ${state.dragonAutoCashoutEnabled ? "is-active" : ""}" id="dragonAutoCashoutToggle">${state.dragonAutoCashoutEnabled ? "Acik" : "Kapali"}</button>
+          </div>
+        </div>
         <div class="dragon-participants is-modal">
           ${(game.participants || []).map((entry) => renderDragonParticipant(entry)).join("")}
         </div>
@@ -2792,6 +2831,38 @@ function savePreferredMineCount(value) {
   }
 }
 
+function loadDragonAutoCashoutPreference() {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(LOCAL_DRAGON_AUTO_CASHOUT_KEY) || "{}");
+    return {
+      enabled: Boolean(raw?.enabled),
+      target: normalizeDragonAutoCashoutTarget(raw?.target)
+    };
+  } catch {
+    return {
+      enabled: false,
+      target: 2
+    };
+  }
+}
+
+function saveDragonAutoCashoutPreference() {
+  try {
+    window.localStorage.setItem(LOCAL_DRAGON_AUTO_CASHOUT_KEY, JSON.stringify({
+      enabled: Boolean(state.dragonAutoCashoutEnabled),
+      target: normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget)
+    }));
+  } catch {
+    // Local preferences are best-effort.
+  }
+}
+
+function normalizeDragonAutoCashoutTarget(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 2;
+  return Math.min(25, Math.max(1.01, Math.round(numeric * 100) / 100));
+}
+
 function getLocalClearTimestamp(scopeKey, channelId) {
   if (!scopeKey || !channelId) return 0;
   try {
@@ -2957,6 +3028,16 @@ function syncDragonModalLoop() {
           ? roundCoinValue(game.baseStake * getDragonLiveMultiplier(game))
           : 0;
       collectibleNode.textContent = formatCoinValue(collectible);
+    }
+    if (
+      isDedicatedDragonView
+      && phase === "playing"
+      && participant?.status === "joined"
+      && state.dragonAutoCashoutEnabled
+      && getDragonLiveMultiplier(game) >= normalizeDragonAutoCashoutTarget(state.dragonAutoCashoutTarget)
+      && !state.interactiveActionLocks[DRAGON_CHANNEL_ID]
+    ) {
+      void handleDragonHubAction("cashout");
     }
     if (subtitleNode) {
       const secondsLeft = Math.max(0, Math.ceil((game.launchAtMs - Date.now()) / 1000));
