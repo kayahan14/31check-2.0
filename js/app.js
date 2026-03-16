@@ -66,6 +66,7 @@ const state = {
   forceScrollToBottom: false,
   highlightedMessageId: "",
   animatingCardKeys: [],
+  pendingUpdatedMessages: {},
   pendingMessagesByChannel: buildEmptyMessageState(),
   currentUser: {
     id: "local-user",
@@ -357,6 +358,19 @@ function syncRemoteMessages(channels) {
     }
 
     state.pendingMessagesByChannel[channelId] = stillPending;
+  }
+
+  for (const [messageId, pendingMessage] of Object.entries(state.pendingUpdatedMessages || {})) {
+    if (!pendingMessage) continue;
+    const channelId = pendingMessage.channelId;
+    const list = [...(nextMessages[channelId] || [])];
+    const index = list.findIndex((message) => message.id === messageId);
+    if (index === -1) {
+      list.push(pendingMessage);
+    } else {
+      list[index] = pendingMessage;
+    }
+    nextMessages[channelId] = sortMessages(list);
   }
 
   const previousSnapshot = JSON.stringify(state.messagesByChannel);
@@ -781,9 +795,11 @@ async function persistMessageUpdate(message) {
     }
 
     const payload = await response.json();
+    delete state.pendingUpdatedMessages[message.id];
     replaceLocalMessage(payload.message || message);
     return payload.message || message;
   } catch (error) {
+    delete state.pendingUpdatedMessages[message.id];
     console.warn("Message update failed.", error);
     return null;
   }
@@ -1031,12 +1047,13 @@ function renderBlackjackMessage(message) {
   const ownerCanPlay = game.ownerId === state.currentUser.id;
   const activeHand = game.hands[game.activeHandIndex] || null;
   const actions = getBlackjackActions(game, activeHand);
+  const resultTone = getBlackjackResultTone(game.resultSummary);
 
   return `
     <div class="blackjack-card">
       <div class="blackjack-summary">
         <div class="blackjack-summary-main">${highlightText(game.summary, state.searchQuery)}</div>
-        <div class="blackjack-summary-sub">${escapeHtml(game.status === "finished" ? game.resultSummary : BLACKJACK_RULE_LABEL)}</div>
+        <div class="blackjack-summary-sub ${resultTone ? `is-${resultTone}` : ""}">${escapeHtml(game.status === "finished" ? decorateBlackjackSummary(game.resultSummary) : BLACKJACK_RULE_LABEL)}</div>
       </div>
       <div class="blackjack-table">
         <section class="blackjack-seat">
@@ -1065,15 +1082,16 @@ function renderBlackjackHand(messageId, hand, index, activeHandIndex) {
   const flags = [
     hand.isSplitAces ? "Split As" : "",
     hand.doubled ? "Double" : "",
-    hand.resultLabel || ""
-  ].filter(Boolean).join(" • ");
+    formatBlackjackResultLabel(hand.resultLabel)
+  ].filter(Boolean);
+  const tone = getBlackjackResultTone(hand.resultLabel);
 
   return `
     <div class="blackjack-hand ${index === activeHandIndex ? "is-active" : ""}">
       <div class="blackjack-seat-label">${escapeHtml(handLabel)}</div>
       <div class="blackjack-cards">${hand.cards.map((card) => renderPlayingCard(messageId, card)).join("")}</div>
       <div class="blackjack-total">${escapeHtml(totalLabel)}</div>
-      ${flags ? `<div class="blackjack-flags">${escapeHtml(flags)}</div>` : ""}
+      ${flags.length ? `<div class="blackjack-flags ${tone ? `is-${tone}` : ""}">${flags.map((flag) => `<span class="blackjack-flag">${escapeHtml(flag)}</span>`).join("")}</div>` : ""}
     </div>
   `;
 }
@@ -1115,6 +1133,7 @@ async function handleBlackjackAction(messageId, action) {
   };
 
   markAnimatingCards(collectBlackjackCardChanges(message, nextMessage));
+  state.pendingUpdatedMessages[message.id] = nextMessage;
   replaceLocalMessage(nextMessage);
   await persistMessageUpdate(nextMessage);
 }
@@ -1283,6 +1302,18 @@ function resolveInitialBlackjack(game) {
 
 function resolveDealerAndOutcome(game) {
   revealDealerCards(game.dealer.cards);
+  if (game.hands.every((hand) => calculateHandTotals(hand.cards).best > 21)) {
+    game.dealer.resultLabel = `Toplam ${calculateHandTotals(game.dealer.cards).best}`;
+    for (const hand of game.hands) {
+      hand.resultLabel = "Kayip";
+      hand.completed = true;
+    }
+    game.status = "finished";
+    game.resultSummary = summarizeBlackjackOutcome(game);
+    game.summary = `${game.ownerName} blackjack elini bitirdi`;
+    return;
+  }
+
   while (shouldDealerHit(game.dealer.cards)) {
     game.dealer.cards.push(drawVisibleCard(game.deck));
   }
@@ -1342,7 +1373,7 @@ function resolveBlackjackHandOutcome(hand, dealerCards) {
 function summarizeBlackjackOutcome(game) {
   return game.hands.map((hand, index) => {
     const label = game.hands.length > 1 ? `El ${index + 1}` : "El";
-    return `${label}: ${hand.resultLabel}`;
+    return `${label}: ${formatBlackjackResultLabel(hand.resultLabel)}`;
   }).join(" • ");
 }
 
@@ -1471,6 +1502,26 @@ function renderDealerTotal(game) {
   }
 
   return `Toplam: ${calculateHandTotals(game.dealer.cards).best}`;
+}
+
+function decorateBlackjackSummary(summary) {
+  return String(summary || "")
+    .replaceAll("Kayip", "Kayip ☠")
+    .replaceAll("Kazandi", "Kazandi ✓");
+}
+
+function formatBlackjackResultLabel(label) {
+  if (label === "Kayip") return "Kayip ☠";
+  if (label === "Kazandi") return "Kazandi ✓";
+  return label || "";
+}
+
+function getBlackjackResultTone(label) {
+  const value = String(label || "").toLocaleLowerCase();
+  if (value.includes("kayip") || value.includes("bust")) return "loss";
+  if (value.includes("kazandi") || value.includes("blackjack")) return "win";
+  if (value.includes("push")) return "push";
+  return "";
 }
 
 function getSplitValue(card) {
