@@ -2,13 +2,13 @@ export const MINING_CHANNEL_ID = "casino:mining";
 export const MINING_TYPE = "mining_session";
 export const MINING_PROFILE_TYPE = "mining_profile";
 export const MINING_SLOT_KEYS = ["armor", "boots", "bag", "tool", "pickaxe"];
-export const MINING_JOIN_WINDOW_MS = 60 * 1000;
+export const MINING_JOIN_WINDOW_MS = 0;
 export const MINING_TARGET_RUN_MS = 12 * 60 * 1000;
 export const MINING_EXIT_COLLAPSE_MS = 90 * 1000;
 export const MINING_TIMEOUT_COLLAPSE_MS = 75 * 1000;
 export const MINING_EVENT_LIFETIME_MS = 75 * 1000;
-export const MINING_VIEW_RADIUS = 6;
-export const MINING_TILE_SIZE = 36;
+export const MINING_VIEW_RADIUS = 10;
+export const MINING_TILE_SIZE = 42;
 export const MINING_DEFAULT_WALLET_COINS = 500;
 
 const FLOOR_TILE = { kind: "floor", oreId: "", hp: 0, maxHp: 0, reward: 0, requiredTier: 0, moleChance: 0 };
@@ -78,7 +78,7 @@ export function normalizeMiningProfile(profile, user = null) {
 
 export function createMiningSession(actor, profile, now = Date.now()) {
   const normalizedProfile = normalizeMiningProfile(profile, actor);
-  return {
+  const session = {
     game: "mining",
     revision: 1,
     status: "lobby",
@@ -99,6 +99,8 @@ export function createMiningSession(actor, profile, now = Date.now()) {
     players: [createLobbyPlayer(actor, normalizedProfile.loadout)],
     sessionSeed: Math.floor(Math.random() * 1_000_000_000)
   };
+  startMiningRun(session, now);
+  return session;
 }
 
 export function normalizeMiningSession(content, now = Date.now()) {
@@ -123,7 +125,8 @@ export function normalizeMiningSession(content, now = Date.now()) {
   game.moles = Array.isArray(game.moles) ? game.moles.map((entry) => normalizeMiningMole(entry)).filter(Boolean) : [];
   game.players = Array.isArray(game.players) ? game.players.map((entry) => normalizeMiningPlayer(entry)).filter(Boolean) : [];
 
-  if (game.status === "lobby" && now >= game.joinDeadlineMs) {
+  if (game.status === "lobby") {
+    game.joinDeadlineMs = now;
     startMiningRun(game, now);
   }
 
@@ -204,7 +207,39 @@ export function moveMiningPlayer(game, playerId, dx, dy, now = Date.now()) {
   player.y += dy;
   player.lastAction = "move";
   player.nextActionAtMs = now + getMoveCooldownMs(player);
+  if (nextTile.kind === "exit") {
+    const extraction = extractMiningPlayer(game, playerId, now);
+    return {
+      changed: Boolean(extraction.changed),
+      reason: extraction.reason || "",
+      player,
+      extracted: Boolean(extraction.changed),
+      awardedCoins: Math.max(0, Math.round(Number(extraction.awardedCoins || 0)))
+    };
+  }
   game.summary = `${player.name} ilerliyor.`;
+  game.revision += 1;
+  return { changed: true, reason: "", player };
+}
+
+export function joinMiningSession(game, actor, loadout, now = Date.now()) {
+  if (!game || (game.status !== "active" && game.status !== "lobby")) {
+    return { changed: false, reason: "inactive" };
+  }
+  if ((game.players || []).some((entry) => entry.id === String(actor?.id || ""))) {
+    return { changed: false, reason: "already-joined" };
+  }
+
+  const player = createLobbyPlayer(actor, loadout);
+  game.players.push(player);
+
+  if (game.status === "active") {
+    spawnMiningPlayer(game, player, now);
+    game.summary = `${player.name} kaziya katildi.`;
+  } else {
+    game.summary = `${player.name} lobiye katildi.`;
+  }
+
   game.revision += 1;
   return { changed: true, reason: "", player };
 }
@@ -339,24 +374,8 @@ export function renderMiningTextState(game, playerId) {
 function startMiningRun(game, now) {
   const activePlayers = (game.players || []).filter((entry) => entry.status === "queued");
   const map = generateMiningMap(activePlayers.length || 1);
-  const center = Math.floor(map.size / 2);
-  const spawnSlots = [
-    { x: center, y: center },
-    { x: center + 1, y: center },
-    { x: center, y: center + 1 },
-    { x: center - 1, y: center },
-    { x: center, y: center - 1 }
-  ];
   activePlayers.forEach((player, index) => {
-    const spawn = spawnSlots[index % spawnSlots.length];
-    player.x = spawn.x;
-    player.y = spawn.y;
-    player.status = "active";
-    player.integrity = 100;
-    player.runCoins = 0;
-    player.totalWeight = 0;
-    player.nextActionAtMs = now;
-    player.extractedAtMs = 0;
+    spawnMiningPlayer(game, player, now, map, index);
   });
 
   game.map = map;
@@ -653,9 +672,9 @@ function normalizeMiningTile(tile) {
 }
 
 function generateMiningMap(playerCount) {
-  const size = Math.min(39, 29 + (Math.max(1, playerCount) * 2));
+  const size = Math.min(241, 161 + (Math.max(1, playerCount) * 20));
   const center = Math.floor(size / 2);
-  const spawnRadius = 2;
+  const spawnRadius = 4;
   const tiles = [];
   const exitCandidates = [];
 
@@ -693,6 +712,59 @@ function generateMiningMap(playerCount) {
   });
 
   return { size, tiles };
+}
+
+function spawnMiningPlayer(game, player, now, explicitMap = null, spawnIndex = 0) {
+  const map = explicitMap || game.map;
+  if (!map || !player) return;
+  const spawn = findAvailableSpawn(map, game.players || [], spawnIndex);
+  player.x = spawn.x;
+  player.y = spawn.y;
+  player.status = "active";
+  player.integrity = 100;
+  player.runCoins = 0;
+  player.totalWeight = 0;
+  player.nextActionAtMs = now;
+  player.extractedAtMs = 0;
+}
+
+function findAvailableSpawn(map, players, spawnIndex = 0) {
+  const center = Math.floor(map.size / 2);
+  const preferred = [
+    { x: center, y: center },
+    { x: center + 1, y: center },
+    { x: center, y: center + 1 },
+    { x: center - 1, y: center },
+    { x: center, y: center - 1 },
+    { x: center + 1, y: center + 1 },
+    { x: center - 1, y: center + 1 },
+    { x: center + 1, y: center - 1 },
+    { x: center - 1, y: center - 1 }
+  ];
+  const occupied = new Set((players || [])
+    .filter((entry) => entry.status === "active")
+    .map((entry) => `${entry.x}:${entry.y}`));
+
+  for (let index = 0; index < preferred.length; index += 1) {
+    const candidate = preferred[(spawnIndex + index) % preferred.length];
+    const tile = getMiningTile(map, candidate.x, candidate.y);
+    if (tile?.kind === "floor" && !occupied.has(`${candidate.x}:${candidate.y}`)) {
+      return candidate;
+    }
+  }
+
+  for (let radius = 2; radius <= 8; radius += 1) {
+    for (let y = center - radius; y <= center + radius; y += 1) {
+      for (let x = center - radius; x <= center + radius; x += 1) {
+        const tile = getMiningTile(map, x, y);
+        if (tile?.kind === "floor" && !occupied.has(`${x}:${y}`)) {
+          return { x, y };
+        }
+      }
+    }
+  }
+
+  return { x: center, y: center };
 }
 
 function getOreForDepth(normalizedDepth) {

@@ -8,6 +8,7 @@ import {
   createMiningSession,
   extractMiningPlayer,
   getMiningCurrentPlayer,
+  joinMiningSession,
   mineMiningTile,
   moveMiningPlayer,
   normalizeMiningProfile,
@@ -108,12 +109,9 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
 
   if (action === "start_lobby") {
     if (sessionRecord && (sessionRecord.content.status === "lobby" || sessionRecord.content.status === "active")) {
-      if (sessionRecord.content.status === "lobby") {
-        const joined = joinLobbyPlayer(sessionRecord.content, normalizedActor, profile.loadout);
-        const nextSession = joined ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
-        return makeResult(nextSession, profile, now);
-      }
-      return makeResult(sessionRecord, profile, now);
+      const joined = joinMiningSession(sessionRecord.content, normalizedActor, profile.loadout, now);
+      const nextSession = joined.changed ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
+      return makeResult(nextSession, profile, now, joined.reason || "");
     }
 
     const session = createMiningSession(normalizedActor, profile, now);
@@ -132,12 +130,12 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
   }
 
   if (action === "join_lobby") {
-    if (!sessionRecord || sessionRecord.content.status !== "lobby") {
-      return makeResult(sessionRecord, profile, now, "no-lobby");
+    if (!sessionRecord || (sessionRecord.content.status !== "lobby" && sessionRecord.content.status !== "active")) {
+      return makeResult(sessionRecord, profile, now, "inactive");
     }
-    const joined = joinLobbyPlayer(sessionRecord.content, normalizedActor, profile.loadout);
-    const nextSession = joined ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
-    return makeResult(nextSession, profile, now);
+    const joined = joinMiningSession(sessionRecord.content, normalizedActor, profile.loadout, now);
+    const nextSession = joined.changed ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
+    return makeResult(nextSession, profile, now, joined.reason || "");
   }
 
   if (!sessionRecord || sessionRecord.content.status !== "active") {
@@ -153,6 +151,21 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
     const result = moveMiningPlayer(session, normalizedActor.id, delta.dx, delta.dy, now);
     changed = result.changed;
     errorCode = result.reason || "";
+    if (result.changed && result.extracted) {
+      const nextProfile = normalizeMiningProfile({
+        ...profile,
+        walletCoins: profile.walletCoins + Math.max(0, Math.round(Number(result.awardedCoins || 0))),
+        stats: {
+          ...profile.stats,
+          runs: profile.stats.runs + 1,
+          escapes: profile.stats.escapes + 1,
+          bestRunCoins: Math.max(profile.stats.bestRunCoins, Math.round(Number(result.awardedCoins || 0)))
+        }
+      }, normalizedActor);
+      const storedProfile = await updateMiningProfileRecord(scopeKey, profileRecord, nextProfile, normalizedActor, now);
+      const nextSession = await writeMiningSession(scopeKey, sessionRecord, session, now);
+      return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode);
+    }
   } else if (action === "mine") {
     const result = mineMiningTile(session, normalizedActor.id, Math.round(Number(meta.x)), Math.round(Number(meta.y)), now);
     changed = result.changed;
@@ -199,28 +212,6 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
 
   const nextSession = changed ? await writeMiningSession(scopeKey, sessionRecord, session, now) : sessionRecord;
   return makeResult(nextSession, profile, now, errorCode);
-}
-
-function joinLobbyPlayer(session, actor, loadout) {
-  if (!session || session.status !== "lobby") return false;
-  if ((session.players || []).some((entry) => entry.id === actor.id)) return false;
-  session.players.push({
-    id: actor.id,
-    name: actor.name,
-    status: "queued",
-    x: 0,
-    y: 0,
-    integrity: 100,
-    runCoins: 0,
-    totalWeight: 0,
-    nextActionAtMs: session.createdAtMs,
-    extractedAtMs: 0,
-    lastAction: "",
-    loadout
-  });
-  session.summary = `${actor.name} lobiye katildi.`;
-  session.revision += 1;
-  return true;
 }
 
 async function syncMiningSessionRecord(scopeKey, now = Date.now()) {

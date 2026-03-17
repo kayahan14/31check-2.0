@@ -1148,16 +1148,19 @@ svg { display: block; }
   flex: 1;
   display: flex;
   min-width: 0;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
   padding: 18px;
   overflow: hidden;
 }
 .mining-shell {
-  width: min(1180px, 100%);
+  width: min(1440px, 100%);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-height: 0;
+  height: 100%;
 }
 .mining-header {
   display: flex;
@@ -1199,6 +1202,11 @@ svg { display: block; }
   justify-content: flex-end;
   gap: 8px;
 }
+.mining-header-pills .btn {
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+}
 .mining-menu-switch {
   display: inline-flex;
   gap: 8px;
@@ -1224,11 +1232,14 @@ svg { display: block; }
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
   gap: 14px;
+  min-height: 0;
 }
 .mining-active-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
+  flex: 1;
+  min-height: 0;
 }
 .mining-stage-card,
 .mining-card {
@@ -1326,7 +1337,7 @@ svg { display: block; }
   gap: 8px;
 }
 .mining-roster.compact {
-  margin-top: 12px;
+  margin-top: 0;
 }
 .mining-roster-pill {
   display: inline-flex;
@@ -1355,9 +1366,28 @@ svg { display: block; }
 .mining-stage-card {
   padding: 18px;
 }
+.mining-stage-card-full {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 14px;
+}
+.mining-stage-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .mining-canvas {
   display: block;
-  width: min(100%, 720px);
+  width: min(100%, 1120px, calc(100vh - 220px));
+  max-width: 100%;
+  max-height: calc(100vh - 230px);
+  flex: 1;
+  min-height: 0;
   margin: 0 auto;
   aspect-ratio: 1 / 1;
   border-radius: 18px;
@@ -1369,7 +1399,6 @@ svg { display: block; }
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px 18px;
-  margin-top: 12px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -2163,6 +2192,9 @@ svg { display: block; }
   .mining-header-pills {
     justify-content: flex-start;
   }
+  .mining-stage-topbar {
+    align-items: flex-start;
+  }
   .mining-stat-row {
     grid-template-columns: 1fr;
   }
@@ -2218,6 +2250,10 @@ svg { display: block; }
   .app.is-casino-view .dragon-screen,
   .app.is-casino-view .mining-screen {
     padding: 8px;
+  }
+  .app.is-casino-view .mining-canvas {
+    width: min(100%, calc(100vh - 190px));
+    max-height: calc(100vh - 200px);
   }
 }
 
