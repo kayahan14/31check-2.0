@@ -7,8 +7,8 @@ export const MINING_TARGET_RUN_MS = 12 * 60 * 1000;
 export const MINING_EXIT_COLLAPSE_MS = 90 * 1000;
 export const MINING_TIMEOUT_COLLAPSE_MS = 75 * 1000;
 export const MINING_EVENT_LIFETIME_MS = 75 * 1000;
-export const MINING_VIEW_RADIUS = 10;
-export const MINING_TILE_SIZE = 42;
+export const MINING_VIEW_RADIUS = 13;
+export const MINING_TILE_SIZE = 34;
 export const MINING_DEFAULT_WALLET_COINS = 500;
 
 const FLOOR_TILE = { kind: "floor", oreId: "", hp: 0, maxHp: 0, reward: 0, requiredTier: 0, moleChance: 0 };
@@ -347,6 +347,7 @@ export function renderMiningTextState(game, playerId) {
   const visible = player ? getMiningVisibleTiles(game, playerId) : { originX: 0, originY: 0, size: 0, tiles: [] };
   return JSON.stringify({
     mode: getMiningPhase(game),
+    mapSize: Number(game?.map?.size || 0),
     player: player ? {
       id: player.id,
       x: player.x,
@@ -361,6 +362,7 @@ export function renderMiningTextState(game, playerId) {
       remainingMs: Math.max(0, game.currentEvent.expiresAtMs - Date.now())
     } : null,
     moles: (game.moles || []).map((entry) => ({ x: entry.x, y: entry.y, hp: entry.hp })),
+    visibleOrigin: { x: visible.originX, y: visible.originY, size: visible.size },
     visibleTiles: visible.tiles.map((entry) => ({
       x: entry.x,
       y: entry.y,
@@ -672,7 +674,7 @@ function normalizeMiningTile(tile) {
 }
 
 function generateMiningMap(playerCount) {
-  const size = Math.min(241, 161 + (Math.max(1, playerCount) * 20));
+  const size = Math.min(321, 241 + (Math.max(1, playerCount) * 16));
   const center = Math.floor(size / 2);
   const spawnRadius = 4;
   const tiles = [];
@@ -735,11 +737,7 @@ function findAvailableSpawn(map, players, spawnIndex = 0) {
     { x: center + 1, y: center },
     { x: center, y: center + 1 },
     { x: center - 1, y: center },
-    { x: center, y: center - 1 },
-    { x: center + 1, y: center + 1 },
-    { x: center - 1, y: center + 1 },
-    { x: center + 1, y: center - 1 },
-    { x: center - 1, y: center - 1 }
+    { x: center, y: center - 1 }
   ];
   const occupied = new Set((players || [])
     .filter((entry) => entry.status === "active")

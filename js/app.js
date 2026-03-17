@@ -79,6 +79,8 @@ const DRAGON_SPEED_STAGES = [
   { multiplier: 5, speed: 1.5 }
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
+const MINING_ACTION_TICK_MS = 170;
+const MINING_PATH_NODE_LIMIT = 5000;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
@@ -120,12 +122,16 @@ const state = {
   miningStateLoading: true,
   miningSessionSyncHandle: null,
   miningUiTickerHandle: null,
+  miningUiLastRenderAtMs: 0,
   miningViewTab: "entrance",
+  miningQueuedDirections: [],
+  miningQueuedInteraction: null,
+  miningTargetTile: null,
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
   searchQuery: "",
-  sidebarCollapsed: false,
+  sidebarCollapsed: initialChannelId() === MINING_CHANNEL_ID,
   minesSetupOpen: false,
   dragonModalMessageId: "",
   dragonModalRaf: 0,
@@ -1504,6 +1510,9 @@ function selectChannel(id) {
   const validCasinoItem = CASINO_ITEMS.find((item) => item.id === id);
   if (!validChannel && !validCasinoItem) return;
   state.selectedChannelId = id;
+  if (isCasinoMiningView(id)) {
+    state.sidebarCollapsed = true;
+  }
   syncUrl(id);
   render();
   if (isCasinoDragonView(id)) {
@@ -2446,11 +2455,14 @@ function startMiningUiTicker() {
   stopMiningUiTicker();
   state.miningUiTickerHandle = window.setInterval(() => {
     if (!isCasinoMiningView()) return;
+    void advanceMiningQueuedAction();
     const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
-    if (phase === "active" || phase === "lobby") {
+    const now = Date.now();
+    if ((phase === "active" || phase === "lobby") && (now - state.miningUiLastRenderAtMs) >= 850) {
+      state.miningUiLastRenderAtMs = now;
       render();
     }
-  }, 250);
+  }, MINING_ACTION_TICK_MS);
 }
 
 function stopMiningUiTicker() {
@@ -2473,9 +2485,15 @@ function applyMiningTransportPayload(payload, options = {}) {
     id: state.currentUser.id,
     name: state.currentUser.displayName
   });
+  const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
+  const player = state.miningSession?.content ? getMiningCurrentPlayer(state.miningSession.content, state.currentUser.id) : null;
+  if (phase !== "active" || !player || player.status !== "active") {
+    clearMiningQueuedActions();
+  }
   window.render_game_to_text = () => renderMiningTextState(state.miningSession?.content || null, state.currentUser.id);
   if (forceRender || previousKey !== JSON.stringify(state.miningSession?.content || null)) {
     if (isCasinoMiningView()) {
+      state.miningUiLastRenderAtMs = Date.now();
       render();
     }
   }
@@ -2502,7 +2520,8 @@ async function handleMiningUiAction(action) {
   }
 }
 
-async function performMiningAction(action, meta = {}) {
+async function performMiningAction(action, meta = {}, options = {}) {
+  const { silent = false } = options;
   if (state.interactiveActionLocks["mining"]) return;
   state.interactiveActionLocks["mining"] = true;
   try {
@@ -2526,11 +2545,13 @@ async function performMiningAction(action, meta = {}) {
     applyMiningTransportPayload(payload, { forceRender: true });
     if (payload.errorCode) {
       const label = translateMiningError(payload.errorCode);
-      if (label) showToast(label);
+      if (label && !silent) showToast(label);
     }
+    return payload;
   } catch (error) {
     console.warn("Mining action failed.", error);
-    showToast("Mining istegi basarisiz.");
+    if (!silent) showToast("Mining istegi basarisiz.");
+    return null;
   } finally {
     delete state.interactiveActionLocks["mining"];
   }
@@ -2615,35 +2636,34 @@ function renderMiningRealtimeView() {
     ? `${session.currentEvent.label} ${formatDurationLabel(session.currentEvent.expiresAtMs - Date.now())}`
     : session.summary || "Magarada ilerle, damarlari kir, cikis ara.";
   return `
-    <section class="mining-screen">
-      <div class="mining-shell">
-        <div class="mining-header">
-          <div>
-            <div class="mining-title">Mining</div>
-            <div class="mining-subtitle">${escapeHtml(activePlayer ? "Haritaya tikla, ilerle ya da komsu damari kir." : "Aktif magara acik. Istedigin an oyuna girebilirsin.")}</div>
-          </div>
-          <div class="mining-header-pills">
-            <span class="mining-pill">Run ${escapeHtml(formatCoinValue(activePlayer?.runCoins || 0))}</span>
-            <span class="mining-pill">Butunluk ${escapeHtml(`${Math.round(Number(activePlayer?.integrity ?? 100))}%`)}</span>
-            <span class="mining-pill">Katilim ${escapeHtml(String(joinedCount))}</span>
-            <span class="mining-pill">Cikis ${escapeHtml(String((session.discoveredExitIds || []).length))}/2</span>
-            <span class="mining-pill">Hedef ${escapeHtml(formatDurationLabel(hardMsLeft))}</span>
-            <span class="mining-pill ${session.collapseAtMs ? "is-danger" : ""}">${escapeHtml(session.collapseAtMs ? `Cokus ${formatDurationLabel(collapseMsLeft)}` : "Cikis aranıyor")}</span>
-            ${joinAction}
-          </div>
-        </div>
+    <section class="mining-screen mining-screen-active">
+      <div class="mining-shell mining-shell-active">
         <div class="mining-active-grid">
           <div class="mining-stage-card mining-stage-card-full">
-            <div class="mining-stage-topbar">
+            <div class="mining-stage-overlay mining-stage-overlay-left">
+              <div class="mining-stage-brand">Mining</div>
+              <div class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikla ve rota olustur. Yakin damar otomatik kirilir." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
               <div class="mining-roster compact">${renderMiningRoster(session.players || [])}</div>
-              <div class="mining-summary-chip">${escapeHtml(summaryPill)}</div>
+            </div>
+            <div class="mining-stage-overlay mining-stage-overlay-right">
+              <div class="mining-stage-hud">
+                <span class="mining-pill">Toplanan ${escapeHtml(formatCoinValue(activePlayer?.runCoins || 0))}</span>
+                <span class="mining-pill">Butunluk ${escapeHtml(`${Math.round(Number(activePlayer?.integrity ?? 100))}%`)}</span>
+                <span class="mining-pill">Katilim ${escapeHtml(String(joinedCount))}</span>
+                <span class="mining-pill">Cikis ${escapeHtml(String((session.discoveredExitIds || []).length))}/2</span>
+                <span class="mining-pill">Hedef ${escapeHtml(formatDurationLabel(hardMsLeft))}</span>
+                <span class="mining-pill ${session.collapseAtMs ? "is-danger" : ""}">${escapeHtml(session.collapseAtMs ? `Cokus ${formatDurationLabel(collapseMsLeft)}` : "Cikis araniyor")}</span>
+              </div>
+              ${joinAction}
             </div>
             <canvas id="miningCanvas" class="mining-canvas" width="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}" height="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}"></canvas>
-            <div class="mining-stage-footer">
-              <span>Tikla: ilerle</span>
-              <span>Yakin damara tikla: kaz</span>
-              <span>Kostebege tikla: vur</span>
-              <span>Cikisa basinca otomatik cikarsin</span>
+            <div class="mining-stage-overlay mining-stage-overlay-bottom">
+              <div class="mining-summary-chip">${escapeHtml(summaryPill)}</div>
+              <div class="mining-stage-legend">
+                <span>Tikla: rota</span>
+                <span>Damar: otomatik yaklas + kaz</span>
+                <span>Kostebek: otomatik yaklas + vur</span>
+              </div>
             </div>
           </div>
         </div>
@@ -2726,8 +2746,7 @@ function renderMiningCanvas(canvas) {
     return;
   }
 
-  const originX = Math.max(0, (player ? player.x : Math.floor(map.size / 2)) - MINING_VIEW_RADIUS);
-  const originY = Math.max(0, (player ? player.y : Math.floor(map.size / 2)) - MINING_VIEW_RADIUS);
+  const { originX, originY } = getMiningViewport(session, player);
   const visibleSize = (MINING_VIEW_RADIUS * 2) + 1;
 
   for (let row = 0; row < visibleSize; row += 1) {
@@ -2765,11 +2784,16 @@ function renderMiningCanvas(canvas) {
         }
       }
       if (tile?.kind === "exit") {
-        context.fillStyle = "#f7d57f";
-        context.fillRect(px + 10, py + 10, MINING_TILE_SIZE - 20, MINING_TILE_SIZE - 20);
+        context.fillStyle = "#ffe78d";
+        context.fillRect(px + 8, py + 8, MINING_TILE_SIZE - 16, MINING_TILE_SIZE - 16);
+        context.strokeStyle = "rgba(255, 255, 255, 0.75)";
+        context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.05);
+        context.strokeRect(px + 10, py + 10, MINING_TILE_SIZE - 20, MINING_TILE_SIZE - 20);
       }
     }
   }
+
+  drawMiningQueuedPath(context, session, originX, originY, player);
 
   for (const mole of session.moles || []) {
     if (mole.x < originX || mole.y < originY || mole.x >= originX + visibleSize || mole.y >= originY + visibleSize) continue;
@@ -2811,22 +2835,23 @@ function handleMiningCanvasClick(event) {
   const localY = (event.clientY - rect.top) * scaleY;
   const col = Math.floor(localX / MINING_TILE_SIZE);
   const row = Math.floor(localY / MINING_TILE_SIZE);
-  const originX = Math.max(0, player.x - MINING_VIEW_RADIUS);
-  const originY = Math.max(0, player.y - MINING_VIEW_RADIUS);
+  const { originX, originY } = getMiningViewport(session, player);
   const targetX = originX + col;
   const targetY = originY + row;
   const tile = getMiningTile(session.map, targetX, targetY);
   if (!tile) return;
 
   const mole = (session.moles || []).find((entry) => entry.x === targetX && entry.y === targetY);
+  clearMiningQueuedActions();
   if (mole) {
     if (Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1) {
       void performMiningAction("attack", { targetId: mole.id });
       return;
     }
-    const moveDirection = getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
-    if (moveDirection) {
-      void performMiningAction("move", { direction: moveDirection });
+    const queuedPath = findMiningApproachPath(session, player, targetX, targetY, "mole");
+    if (queuedPath.length) {
+      queueMiningPath(queuedPath, { action: "attack", meta: { targetId: mole.id } }, { x: targetX, y: targetY, kind: "mole" });
+      void advanceMiningQueuedAction();
     }
     return;
   }
@@ -2834,9 +2859,18 @@ function handleMiningCanvasClick(event) {
     void performMiningAction("mine", { x: targetX, y: targetY });
     return;
   }
-  const direction = getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
-  if (direction) {
-    void performMiningAction("move", { direction });
+  if (tile.kind === "wall") {
+    const queuedPath = findMiningApproachPath(session, player, targetX, targetY, "wall");
+    if (queuedPath.length) {
+      queueMiningPath(queuedPath, { action: "mine", meta: { x: targetX, y: targetY } }, { x: targetX, y: targetY, kind: "wall" });
+      void advanceMiningQueuedAction();
+    }
+    return;
+  }
+  const pathDirections = findMiningPath(session, { x: player.x, y: player.y }, { x: targetX, y: targetY });
+  if (pathDirections.length) {
+    queueMiningPath(pathDirections, null, { x: targetX, y: targetY, kind: tile.kind });
+    void advanceMiningQueuedAction();
   }
 }
 
@@ -2870,6 +2904,198 @@ function getMiningStepDirectionTowardTarget(session, player, targetX, targetY) {
   return "";
 }
 
+function clearMiningQueuedActions() {
+  state.miningQueuedDirections = [];
+  state.miningQueuedInteraction = null;
+  state.miningTargetTile = null;
+}
+
+function queueMiningPath(pathDirections, interaction = null, targetTile = null) {
+  state.miningQueuedDirections = [...pathDirections];
+  state.miningQueuedInteraction = interaction ? { ...interaction } : null;
+  state.miningTargetTile = targetTile ? { ...targetTile } : null;
+}
+
+async function advanceMiningQueuedAction() {
+  if (state.interactiveActionLocks["mining"]) return;
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!session || getMiningPhase(session) !== "active" || !player || player.status !== "active") {
+    clearMiningQueuedActions();
+    return;
+  }
+
+  if (state.miningQueuedDirections.length) {
+    const direction = state.miningQueuedDirections[0];
+    const payload = await performMiningAction("move", { direction }, { silent: true });
+    if (typeof payload === "undefined") return;
+    if (!payload) {
+      clearMiningQueuedActions();
+      return;
+    }
+    const errorCode = payload?.errorCode || "";
+    if (!errorCode) {
+      state.miningQueuedDirections.shift();
+      if (!state.miningQueuedDirections.length && !state.miningQueuedInteraction) {
+        state.miningTargetTile = null;
+      }
+      return;
+    }
+    if (errorCode === "cooldown") return;
+    clearMiningQueuedActions();
+    return;
+  }
+
+  if (!state.miningQueuedInteraction) return;
+  const payload = await performMiningAction(state.miningQueuedInteraction.action, state.miningQueuedInteraction.meta, { silent: true });
+  if (typeof payload === "undefined") return;
+  if (!payload) {
+    clearMiningQueuedActions();
+    return;
+  }
+  const errorCode = payload?.errorCode || "";
+  if (!errorCode) {
+    clearMiningQueuedActions();
+    return;
+  }
+  if (errorCode === "cooldown") return;
+  clearMiningQueuedActions();
+}
+
+function getMiningViewport(session, player) {
+  const mapSize = Number(session?.map?.size || 0);
+  const visibleSize = (MINING_VIEW_RADIUS * 2) + 1;
+  const fallback = Math.max(0, Math.floor(mapSize / 2) - MINING_VIEW_RADIUS);
+  if (!player || !mapSize) {
+    return { originX: fallback, originY: fallback, visibleSize };
+  }
+  return {
+    originX: clamp(player.x - MINING_VIEW_RADIUS, 0, Math.max(0, mapSize - visibleSize)),
+    originY: clamp(player.y - MINING_VIEW_RADIUS, 0, Math.max(0, mapSize - visibleSize)),
+    visibleSize
+  };
+}
+
+function findMiningApproachPath(session, player, targetX, targetY, kind = "wall") {
+  const adjacentTargets = [
+    { x: targetX, y: targetY - 1 },
+    { x: targetX + 1, y: targetY },
+    { x: targetX, y: targetY + 1 },
+    { x: targetX - 1, y: targetY }
+  ].filter((entry) => {
+    const tile = getMiningTile(session.map, entry.x, entry.y);
+    return tile?.kind === "floor" || tile?.kind === "exit";
+  });
+
+  let bestPath = [];
+  for (const candidate of adjacentTargets) {
+    const path = findMiningPath(session, { x: player.x, y: player.y }, candidate);
+    if (!path.length && (candidate.x !== player.x || candidate.y !== player.y)) continue;
+    if (!bestPath.length || path.length < bestPath.length) {
+      bestPath = path;
+    }
+  }
+
+  if (!bestPath.length && kind === "wall" && Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1) {
+    return [];
+  }
+  return bestPath;
+}
+
+function findMiningPath(session, start, goal) {
+  if (!session?.map || !start || !goal) return [];
+  if (start.x === goal.x && start.y === goal.y) return [];
+  const queue = [start];
+  const visited = new Set([`${start.x}:${start.y}`]);
+  const parents = new Map();
+  let cursor = 0;
+
+  while (cursor < queue.length && visited.size <= MINING_PATH_NODE_LIMIT) {
+    const current = queue[cursor];
+    cursor += 1;
+    if (current.x === goal.x && current.y === goal.y) {
+      break;
+    }
+
+    for (const next of [
+      { x: current.x, y: current.y - 1 },
+      { x: current.x + 1, y: current.y },
+      { x: current.x, y: current.y + 1 },
+      { x: current.x - 1, y: current.y }
+    ]) {
+      const key = `${next.x}:${next.y}`;
+      if (visited.has(key)) continue;
+      const tile = getMiningTile(session.map, next.x, next.y);
+      if (!(tile?.kind === "floor" || tile?.kind === "exit")) continue;
+      visited.add(key);
+      parents.set(key, current);
+      queue.push(next);
+    }
+  }
+
+  const goalKey = `${goal.x}:${goal.y}`;
+  if (!parents.has(goalKey)) {
+    return [];
+  }
+
+  const path = [];
+  let current = goal;
+  while (current.x !== start.x || current.y !== start.y) {
+    const previous = parents.get(`${current.x}:${current.y}`);
+    if (!previous) return [];
+    path.push(getMiningDirection(previous, current));
+    current = previous;
+  }
+
+  return path.reverse().filter(Boolean);
+}
+
+function drawMiningQueuedPath(context, session, originX, originY, player) {
+  if (!player) return;
+  const projectedTiles = [];
+  let current = { x: player.x, y: player.y };
+  for (const direction of state.miningQueuedDirections || []) {
+    if (direction === "up") current = { x: current.x, y: current.y - 1 };
+    else if (direction === "down") current = { x: current.x, y: current.y + 1 };
+    else if (direction === "left") current = { x: current.x - 1, y: current.y };
+    else if (direction === "right") current = { x: current.x + 1, y: current.y };
+    projectedTiles.push(current);
+  }
+
+  context.save();
+  context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.09);
+  context.strokeStyle = "rgba(255, 245, 164, 0.88)";
+  context.setLineDash([MINING_TILE_SIZE * 0.18, MINING_TILE_SIZE * 0.14]);
+  context.beginPath();
+  context.moveTo(((player.x - originX) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2), ((player.y - originY) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2));
+  projectedTiles.forEach((tile, index) => {
+    if (tile.x < originX || tile.y < originY || tile.x >= originX + ((MINING_VIEW_RADIUS * 2) + 1) || tile.y >= originY + ((MINING_VIEW_RADIUS * 2) + 1)) {
+      return;
+    }
+    const px = ((tile.x - originX) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2);
+    const py = ((tile.y - originY) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2);
+    if (index === 0 && projectedTiles.length === 1) {
+      context.lineTo(px, py);
+      return;
+    }
+    context.lineTo(px, py);
+  });
+  context.stroke();
+  context.setLineDash([]);
+
+  if (state.miningTargetTile) {
+    const { x, y } = state.miningTargetTile;
+    if (x >= originX && y >= originY && x < originX + ((MINING_VIEW_RADIUS * 2) + 1) && y < originY + ((MINING_VIEW_RADIUS * 2) + 1)) {
+      const px = (x - originX) * MINING_TILE_SIZE;
+      const py = (y - originY) * MINING_TILE_SIZE;
+      context.strokeStyle = "rgba(255, 255, 255, 0.94)";
+      context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.08);
+      context.strokeRect(px + 4, py + 4, MINING_TILE_SIZE - 8, MINING_TILE_SIZE - 8);
+    }
+  }
+  context.restore();
+}
+
 function drawMiningPickaxe(context, px, py) {
   context.save();
   context.translate(px + (MINING_TILE_SIZE * 0.63), py + (MINING_TILE_SIZE * 0.36));
@@ -2886,18 +3112,18 @@ function drawMiningPickaxe(context, px, py) {
 }
 
 function getMiningTileColor(tile) {
-  if (!tile) return "#13141a";
-  if (tile.kind === "floor") return "#242833";
-  if (tile.kind === "exit") return "#4f8d5a";
+  if (!tile) return "#1e2641";
+  if (tile.kind === "floor") return "#20385a";
+  if (tile.kind === "exit") return "#6fd28a";
   const oreColors = {
-    stone: "#525867",
-    coal: "#2f323a",
-    copper: "#9a5f3e",
-    iron: "#727d8e",
-    amber: "#c27b26",
-    sapphire: "#3f67cf",
-    ruby: "#b93854",
-    starsteel: "#4ac7d9"
+    stone: "#7b86a0",
+    coal: "#475066",
+    copper: "#ff9360",
+    iron: "#b6c7de",
+    amber: "#ffca63",
+    sapphire: "#5e8eff",
+    ruby: "#ff637c",
+    starsteel: "#71f4ff"
   };
   return oreColors[tile.oreId] || "#525867";
 }
@@ -4478,6 +4704,10 @@ function statusColor(status) {
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function escapeHtml(value) {
