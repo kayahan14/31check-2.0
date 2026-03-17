@@ -1,5 +1,21 @@
 ﻿import { DiscordSDK, Events } from "@discord/embedded-app-sdk";
 import { DEFAULT_DRAGON_CONFIG, normalizeDragonConfig } from "../shared/dragon-config.js";
+import {
+  MINING_CHANNEL_ID,
+  MINING_JOIN_WINDOW_MS,
+  MINING_SHOP_ITEMS,
+  MINING_SLOT_KEYS,
+  MINING_TARGET_RUN_MS,
+  MINING_TILE_SIZE,
+  MINING_VIEW_RADIUS,
+  getMiningCurrentPlayer,
+  getMiningPhase,
+  getMiningTile,
+  getMiningVisibleTiles,
+  normalizeMiningProfile,
+  normalizeMiningSession,
+  renderMiningTextState
+} from "../shared/mining-core.js";
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://hjlxrgzxyafedqamlzer.supabase.co";
@@ -37,7 +53,8 @@ const GAME_BUTTONS = [
   { id: "case", label: "🎁 Kasa", game: "case" }
 ];
 const CASINO_ITEMS = [
-  { id: "casino:dragon", label: "🐉 Ejderha" }
+  { id: "casino:dragon", label: "🐉 Ejderha" },
+  { id: MINING_CHANNEL_ID, label: "⛏️ Mining" }
 ];
 
 const BLACKJACK_SUITS = [
@@ -99,6 +116,11 @@ const state = {
   dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigUpdatedAtMs: 0,
   dragonRecentResults: [],
+  miningSession: null,
+  miningProfile: null,
+  miningStateLoading: true,
+  miningSessionSyncHandle: null,
+  miningViewTab: "entrance",
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
@@ -364,6 +386,7 @@ function bindStaticEvents() {
     state.selectedChannelId = initialChannelId();
     render();
   });
+  window.addEventListener("keydown", handleGlobalKeydown);
 }
 
 async function initializeRuntime() {
@@ -373,6 +396,7 @@ async function initializeRuntime() {
     state.membersLoading = false;
     startMessageSync();
     await initializeDragonTransport();
+    await initializeMiningTransport();
     render();
     return;
   }
@@ -394,6 +418,7 @@ async function initializeRuntime() {
     await loadPersistedMessages({ initial: true });
     startMessageSync();
     await initializeDragonTransport();
+    await initializeMiningTransport();
     render();
     renderUserModal();
   } catch (error) {
@@ -407,6 +432,7 @@ async function initializeRuntime() {
     await loadPersistedMessages({ initial: true });
     startMessageSync();
     await initializeDragonTransport();
+    await initializeMiningTransport();
     render();
   }
 }
@@ -590,6 +616,7 @@ function stopMessageSync() {
   document.removeEventListener("visibilitychange", handleVisibilitySync);
   stopDragonSessionSync();
   stopDragonModalLoop();
+  stopMiningSessionSync();
 }
 
 function handleVisibilitySync() {
@@ -597,6 +624,7 @@ function handleVisibilitySync() {
   if (document.visibilityState === "visible") {
     void loadPersistedMessages();
     void loadDragonSession();
+    void loadMiningState();
   }
 }
 
@@ -664,12 +692,14 @@ function render() {
   const shouldRestoreSearchFocus = focusSnapshot?.id === "messageSearchInput";
   const shouldStickToBottom = state.messagePanePinnedToBottom || state.forceScrollToBottom;
   const isDragonView = isCasinoDragonView();
+  const isMiningView = isCasinoMiningView();
+  const isDedicatedCasinoView = isDragonView || isMiningView;
   const channel = selectedChannel();
-  const rawMessages = isDragonView ? [] : applyLocalMessageFilters(state.messagesByChannel[channel?.id] || [], channel?.id).filter((message) => message.type !== "dragon");
+  const rawMessages = isDedicatedCasinoView ? [] : applyLocalMessageFilters(state.messagesByChannel[channel?.id] || [], channel?.id).filter((message) => message.type !== "dragon");
   const messages = filterMessages(rawMessages, state.searchQuery);
   const composerDisabled = state.isMessagesLoading;
 
-  app.className = `app ${state.sidebarCollapsed ? "sidebar-collapsed" : ""} ${isDragonView ? "is-dragon-view" : ""}`.trim();
+  app.className = `app ${state.sidebarCollapsed ? "sidebar-collapsed" : ""} ${isDragonView ? "is-dragon-view" : ""} ${isMiningView ? "is-mining-view" : ""} ${isDedicatedCasinoView ? "is-casino-view" : ""}`.trim();
   app.innerHTML = `
     <aside class="sidebar">
       <div class="sidebar-top">
@@ -696,6 +726,10 @@ function render() {
       <div class="main-panel">
         ${isDragonView ? `
         ${renderDragonRealtimeView()}
+        <aside class="members">
+          <div class="members-scroll">${renderMembers()}</div>
+        </aside>` : isMiningView ? `
+        ${renderMiningRealtimeView()}
         <aside class="members">
           <div class="members-scroll">${renderMembers()}</div>
         </aside>` : `
@@ -961,6 +995,24 @@ function bindRuntimeUi() {
       await handleDragonHubAction(action);
     });
   });
+  app.querySelectorAll("[data-mining-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.miningViewTab = button.dataset.miningTab || "entrance";
+      render();
+    });
+  });
+  app.querySelectorAll("[data-mining-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.dataset.miningAction;
+      if (!action) return;
+      await handleMiningUiAction(action);
+    });
+  });
+  const miningCanvas = document.getElementById("miningCanvas");
+  if (miningCanvas instanceof HTMLCanvasElement) {
+    miningCanvas.addEventListener("click", handleMiningCanvasClick);
+    renderMiningCanvas(miningCanvas);
+  }
   const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
   if (dragonAutoInput) {
     const syncDragonAutoInput = () => {
@@ -1460,6 +1512,10 @@ function selectChannel(id) {
   render();
   if (isCasinoDragonView(id)) {
     void loadDragonSession();
+    return;
+  }
+  if (isCasinoMiningView(id)) {
+    void loadMiningState();
   }
 }
 
@@ -1469,6 +1525,10 @@ function selectedChannel() {
 
 function isCasinoDragonView(id = state.selectedChannelId) {
   return id === DRAGON_CHANNEL_ID;
+}
+
+function isCasinoMiningView(id = state.selectedChannelId) {
+  return id === MINING_CHANNEL_ID;
 }
 
 function initialChannelId() {
@@ -2340,6 +2400,569 @@ function stopDragonSessionSync() {
   if (!state.dragonSessionSyncHandle) return;
   window.clearInterval(state.dragonSessionSyncHandle);
   state.dragonSessionSyncHandle = null;
+}
+
+async function initializeMiningTransport() {
+  await loadMiningState({ initial: true });
+  startMiningSessionSync();
+  window.advanceTime = (ms) => new Promise((resolve) => window.setTimeout(resolve, Number(ms || 0)));
+}
+
+async function loadMiningState({ initial = false } = {}) {
+  if (initial) {
+    state.miningStateLoading = true;
+    if (isCasinoMiningView()) render();
+  }
+
+  try {
+    const response = await fetch(`/api/mining?scopeKey=${encodeURIComponent(state.scopeKey)}&actorId=${encodeURIComponent(state.currentUser.id)}&actorName=${encodeURIComponent(state.currentUser.displayName)}&ts=${Date.now()}`, {
+      cache: "no-store"
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    applyMiningTransportPayload(payload, { forceRender: initial });
+  } catch (error) {
+    console.warn("Mining state load failed.", error);
+  } finally {
+    state.miningStateLoading = false;
+    if (initial && isCasinoMiningView()) render();
+  }
+}
+
+function startMiningSessionSync() {
+  stopMiningSessionSync();
+  if (!state.scopeKey) return;
+
+  state.miningSessionSyncHandle = window.setInterval(() => {
+    if (!state.miningSession && !isCasinoMiningView()) return;
+    void loadMiningState();
+  }, 700);
+}
+
+function stopMiningSessionSync() {
+  if (!state.miningSessionSyncHandle) return;
+  window.clearInterval(state.miningSessionSyncHandle);
+  state.miningSessionSyncHandle = null;
+}
+
+function applyMiningTransportPayload(payload, options = {}) {
+  const { forceRender = false } = options;
+  const previousKey = JSON.stringify(state.miningSession?.content || null);
+  const nextSession = payload?.session
+    ? {
+      ...payload.session,
+      content: normalizeMiningSession(payload.session.content)
+    }
+    : null;
+  state.miningSession = nextSession;
+  state.miningProfile = normalizeMiningProfile(payload?.profile, {
+    id: state.currentUser.id,
+    name: state.currentUser.displayName
+  });
+  window.render_game_to_text = () => renderMiningTextState(state.miningSession?.content || null, state.currentUser.id);
+  if (forceRender || previousKey !== JSON.stringify(state.miningSession?.content || null)) {
+    if (isCasinoMiningView()) {
+      render();
+    }
+  }
+}
+
+async function handleMiningUiAction(action) {
+  if (action === "show-entrance") {
+    state.miningViewTab = "entrance";
+    render();
+    return;
+  }
+  if (action === "show-inventory") {
+    state.miningViewTab = "inventory";
+    render();
+    return;
+  }
+  if (action === "show-shop") {
+    state.miningViewTab = "shop";
+    render();
+    return;
+  }
+  if (action === "start_lobby" || action === "join_lobby" || action === "extract") {
+    await performMiningAction(action);
+  }
+}
+
+async function performMiningAction(action, meta = {}) {
+  if (state.interactiveActionLocks["mining"]) return;
+  state.interactiveActionLocks["mining"] = true;
+  try {
+    const response = await fetch("/api/mining", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scopeKey: state.scopeKey,
+        action,
+        actor: {
+          id: state.currentUser.id,
+          name: state.currentUser.displayName
+        },
+        ...meta
+      })
+    });
+    if (!response.ok) {
+      throw new Error("Mining action failed.");
+    }
+    const payload = await response.json();
+    applyMiningTransportPayload(payload, { forceRender: true });
+    if (payload.errorCode) {
+      const label = translateMiningError(payload.errorCode);
+      if (label) showToast(label);
+    }
+  } catch (error) {
+    console.warn("Mining action failed.", error);
+    showToast("Mining istegi basarisiz.");
+  } finally {
+    delete state.interactiveActionLocks["mining"];
+  }
+}
+
+function translateMiningError(errorCode) {
+  if (!errorCode) return "";
+  const map = {
+    cooldown: "Biraz nefeslen, hareket sirada.",
+    blocked: "Orasi kapali.",
+    "pick-tier": "Bu damar icin daha iyi kazma lazim.",
+    range: "Hedef bir adim uzakta degil.",
+    "not-on-exit": "Cikmak icin cikis karesine basman lazim.",
+    inactive: "Su an aktif bir maden yok.",
+    "no-lobby": "Katilacak lobi bulunamadi."
+  };
+  return map[errorCode] || "";
+}
+
+function renderMiningRealtimeView() {
+  const profile = normalizeMiningProfile(state.miningProfile, {
+    id: state.currentUser.id,
+    name: state.currentUser.displayName
+  });
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const phase = session ? getMiningPhase(session) : "idle";
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  const tab = state.miningViewTab || "entrance";
+  const isActiveRun = phase === "active";
+  const isLobby = phase === "lobby";
+  const isFinished = phase === "finished" || phase === "collapsed";
+  const joinedCount = session?.players?.length || 0;
+  const lobbyMsLeft = session ? Math.max(0, session.joinDeadlineMs - Date.now()) : MINING_JOIN_WINDOW_MS;
+  const collapseMsLeft = session?.collapseAtMs ? Math.max(0, session.collapseAtMs - Date.now()) : 0;
+  const hardMsLeft = session?.hardCollapseAtMs ? Math.max(0, session.hardCollapseAtMs - Date.now()) : MINING_TARGET_RUN_MS;
+
+  if (state.miningStateLoading) {
+    return `<section class="mining-screen"><div class="chat-loading"><div class="chat-loading-spinner"></div><div class="chat-loading-text">Mining yukleniyor...</div></div></section>`;
+  }
+
+  const menu = `
+    <div class="mining-menu-switch">
+      <button type="button" class="mining-menu-tab ${tab === "entrance" ? "active" : ""}" data-mining-action="show-entrance">Magara</button>
+      <button type="button" class="mining-menu-tab ${tab === "inventory" ? "active" : ""}" data-mining-action="show-inventory">Envanter</button>
+      <button type="button" class="mining-menu-tab ${tab === "shop" ? "active" : ""}" data-mining-action="show-shop">Dukkan</button>
+    </div>
+  `;
+
+  if (!session || isFinished) {
+    return `
+      <section class="mining-screen">
+        <div class="mining-shell">
+          <div class="mining-header">
+            <div>
+              <div class="mining-title">Mining</div>
+              <div class="mining-subtitle">Tek aktif magara, 1 dk katilim penceresi, 10-15 dk risk-reward kosusu.</div>
+            </div>
+            <div class="mining-wallet">${escapeHtml(formatCoinValue(profile.walletCoins))}</div>
+          </div>
+          ${menu}
+          <div class="mining-main-grid">
+            <div class="mining-card mining-hero">
+              <div class="mining-hero-copy">
+                <strong>Yeni magara hazirla</strong>
+                <p>Magara kapanmadan cikabilirsen coinler cebe gider. Cikis bulunduğu anda geri sayim baslar.</p>
+              </div>
+              <button type="button" class="btn dragon-modal-action" data-mining-action="start_lobby">Magaayi Ac</button>
+              ${session ? `<div class="mining-summary-chip ${phase === "collapsed" ? "is-loss" : "is-win"}">${escapeHtml(session.summary || "Son seans tamamlandi.")}</div>` : ""}
+            </div>
+            <div class="mining-card">
+              ${renderMiningSecondaryPanel(tab, profile)}
+            </div>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  if (isLobby) {
+    const joined = Boolean(player);
+    return `
+      <section class="mining-screen">
+        <div class="mining-shell">
+          <div class="mining-header">
+            <div>
+              <div class="mining-title">Mining Lobisi</div>
+              <div class="mining-subtitle">Katilim penceresi kapaninca tek aktif seans baslayacak.</div>
+            </div>
+            <div class="mining-wallet">${escapeHtml(formatDurationLabel(lobbyMsLeft))}</div>
+          </div>
+          ${menu}
+          <div class="mining-main-grid">
+            <div class="mining-card mining-lobby-card">
+              <div class="mining-stat-row">
+                <div class="mining-stat">
+                  <span class="mining-label">Katilim</span>
+                  <strong>${escapeHtml(formatDurationLabel(lobbyMsLeft))}</strong>
+                </div>
+                <div class="mining-stat">
+                  <span class="mining-label">Oyuncu</span>
+                  <strong>${escapeHtml(String(joinedCount))}</strong>
+                </div>
+                <div class="mining-stat">
+                  <span class="mining-label">Tahmini Tur</span>
+                  <strong>10-15 dk</strong>
+                </div>
+              </div>
+              <div class="mining-roster">${renderMiningRoster(session.players || [])}</div>
+              <div class="mining-lobby-actions">
+                <button type="button" class="btn dragon-modal-action" data-mining-action="${joined ? "show-inventory" : "join_lobby"}">${joined ? "Hazirsin" : "Katil"}</button>
+              </div>
+            </div>
+            <div class="mining-card">
+              ${renderMiningSecondaryPanel(tab, profile)}
+            </div>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  const activePlayer = player && player.status === "active" ? player : null;
+  const standingTile = activePlayer ? getMiningTile(session.map, activePlayer.x, activePlayer.y) : null;
+  return `
+    <section class="mining-screen">
+      <div class="mining-shell">
+        <div class="mining-header">
+          <div>
+            <div class="mining-title">Mining</div>
+            <div class="mining-subtitle">${escapeHtml(session.summary || "Magarada ilerle, damarlari kir, cikis ara.")}</div>
+          </div>
+          <div class="mining-header-pills">
+            <span class="mining-pill">Sert Cokme: ${escapeHtml(formatDurationLabel(hardMsLeft))}</span>
+            <span class="mining-pill ${session.collapseAtMs ? "is-danger" : ""}">${escapeHtml(session.collapseAtMs ? `Cokme: ${formatDurationLabel(collapseMsLeft)}` : "Cikis bulunmadi")}</span>
+          </div>
+        </div>
+        <div class="mining-active-grid">
+          <div class="mining-stage-card">
+            <canvas id="miningCanvas" class="mining-canvas" width="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}" height="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}"></canvas>
+            <div class="mining-stage-footer">
+              <span>WASD / Oklar: hareket</span>
+              <span>Space: yakin damari kir</span>
+              <span>F: komsu kostebege vur</span>
+            </div>
+          </div>
+          <div class="mining-side-column">
+            <div class="mining-card">
+              <div class="mining-stat-row">
+                <div class="mining-stat">
+                  <span class="mining-label">Run Coin</span>
+                  <strong>${escapeHtml(formatCoinValue(activePlayer?.runCoins || player?.runCoins || 0))}</strong>
+                </div>
+                <div class="mining-stat">
+                  <span class="mining-label">Butunluk</span>
+                  <strong>${escapeHtml(`${Math.round(Number(activePlayer?.integrity ?? player?.integrity ?? 100))}%`)}</strong>
+                </div>
+                <div class="mining-stat">
+                  <span class="mining-label">Cikis</span>
+                  <strong>${escapeHtml(String((session.discoveredExitIds || []).length))}/2</strong>
+                </div>
+              </div>
+              <div class="mining-objective-list">
+                <span>${escapeHtml(activePlayer ? `Agirlik: ${activePlayer.totalWeight}` : "Seyir modundasin")}</span>
+                <span>${escapeHtml(session.currentEvent ? `${session.currentEvent.label} ${formatDurationLabel(session.currentEvent.expiresAtMs - Date.now())}` : "Event bekleniyor")}</span>
+                <span>${escapeHtml((session.moles || []).length ? `${session.moles.length} kostebek aktif` : "Sessiz ilerle, kostebek cikarabilir")}</span>
+              </div>
+              <div class="mining-roster compact">${renderMiningRoster(session.players || [])}</div>
+              <button type="button" class="btn dragon-modal-action" data-mining-action="extract" ${!activePlayer || standingTile?.kind !== "exit" ? "disabled" : ""}>Cikisi Kullan</button>
+            </div>
+            <div class="mining-card">
+              ${renderMiningSecondaryPanel(tab, profile)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderMiningSecondaryPanel(tab, profile) {
+  if (tab === "shop") {
+    return `
+      <div class="mining-panel-title">Dukkan</div>
+      <div class="mining-shop-list">
+        ${MINING_SHOP_ITEMS.map((item) => `
+          <div class="mining-shop-item">
+            <strong>${escapeHtml(item.label)}</strong>
+            <span>${escapeHtml(formatCoinValue(item.price))}</span>
+            <small>${escapeHtml(item.note)}</small>
+            <button type="button" class="btn btn-secondary" disabled>Yakinda</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  if (tab === "inventory") {
+    return `
+      <div class="mining-panel-title">Envanter / Slotlar</div>
+      <div class="mining-slot-grid">
+        ${MINING_SLOT_KEYS.map((slot) => `
+          <div class="mining-slot-card">
+            <span>${escapeHtml(getMiningSlotLabel(slot))}</span>
+            <strong>${escapeHtml(profile.loadout?.[slot]?.label || "Bos")}</strong>
+          </div>
+        `).join("")}
+      </div>
+      <p class="mining-slot-note">Slot sistemi hazir. Ekipman etkileri sonraki adimda acilacak.</p>
+    `;
+  }
+
+  return `
+    <div class="mining-panel-title">Magara Bilgisi</div>
+    <div class="mining-info-stack">
+      <div class="mining-info-row"><span>Join Window</span><strong>1 dk</strong></div>
+      <div class="mining-info-row"><span>Tur Hedefi</span><strong>10-15 dk</strong></div>
+      <div class="mining-info-row"><span>Cikis Bulununca</span><strong>90 sn cokme</strong></div>
+      <div class="mining-info-row"><span>Rare Event</span><strong>Yildiz Cevheri</strong></div>
+      <div class="mining-info-row"><span>Kostebek Tehdidi</span><strong>Coin ve agirlikla artar</strong></div>
+    </div>
+  `;
+}
+
+function renderMiningRoster(players) {
+  if (!players.length) {
+    return '<div class="mining-roster-empty">Henuz madenci yok.</div>';
+  }
+  return players.map((entry) => {
+    const tone = entry.status === "escaped" ? "is-win" : entry.status === "collapsed" ? "is-loss" : "";
+    return `<span class="mining-roster-pill ${tone}">${escapeHtml(entry.name)} · ${escapeHtml(entry.status === "queued" ? "hazir" : entry.status === "active" ? `${entry.runCoins}c` : entry.status)}</span>`;
+  }).join("");
+}
+
+function renderMiningCanvas(canvas) {
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  const map = session?.map;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#18151f";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!session || !map) {
+    context.fillStyle = "#f5e8c8";
+    context.font = "700 28px Arial";
+    context.textAlign = "center";
+    context.fillText("Mining", canvas.width / 2, canvas.height / 2 - 10);
+    context.font = "14px Arial";
+    context.fillText("Lobi acildiginda harita burada canlanacak.", canvas.width / 2, canvas.height / 2 + 20);
+    return;
+  }
+
+  const originX = Math.max(0, (player ? player.x : Math.floor(map.size / 2)) - MINING_VIEW_RADIUS);
+  const originY = Math.max(0, (player ? player.y : Math.floor(map.size / 2)) - MINING_VIEW_RADIUS);
+  const visibleSize = (MINING_VIEW_RADIUS * 2) + 1;
+
+  for (let row = 0; row < visibleSize; row += 1) {
+    for (let col = 0; col < visibleSize; col += 1) {
+      const tileX = originX + col;
+      const tileY = originY + row;
+      const tile = getMiningTile(map, tileX, tileY);
+      const px = col * MINING_TILE_SIZE;
+      const py = row * MINING_TILE_SIZE;
+      context.fillStyle = getMiningTileColor(tile);
+      context.fillRect(px + 1, py + 1, MINING_TILE_SIZE - 2, MINING_TILE_SIZE - 2);
+
+      if (tile?.kind === "wall" && tile.oreId) {
+        context.fillStyle = "rgba(255,255,255,0.12)";
+        context.fillRect(px + 8, py + 8, MINING_TILE_SIZE - 16, MINING_TILE_SIZE - 16);
+      }
+      if (tile?.kind === "exit") {
+        context.fillStyle = "#f7d57f";
+        context.fillRect(px + 10, py + 10, MINING_TILE_SIZE - 20, MINING_TILE_SIZE - 20);
+      }
+    }
+  }
+
+  for (const mole of session.moles || []) {
+    if (mole.x < originX || mole.y < originY || mole.x >= originX + visibleSize || mole.y >= originY + visibleSize) continue;
+    const px = (mole.x - originX) * MINING_TILE_SIZE;
+    const py = (mole.y - originY) * MINING_TILE_SIZE;
+    context.fillStyle = "#7a4938";
+    context.beginPath();
+    context.arc(px + (MINING_TILE_SIZE / 2), py + (MINING_TILE_SIZE / 2), MINING_TILE_SIZE * 0.28, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  for (const entry of session.players || []) {
+    if (entry.x < originX || entry.y < originY || entry.x >= originX + visibleSize || entry.y >= originY + visibleSize) continue;
+    const px = (entry.x - originX) * MINING_TILE_SIZE;
+    const py = (entry.y - originY) * MINING_TILE_SIZE;
+    context.fillStyle = entry.id === state.currentUser.id ? "#6ec8ff" : "#9effa0";
+    context.beginPath();
+    context.arc(px + (MINING_TILE_SIZE / 2), py + (MINING_TILE_SIZE / 2), MINING_TILE_SIZE * 0.24, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = "#0f1014";
+    context.font = "900 10px Arial";
+    context.textAlign = "center";
+    context.fillText(entry.name.slice(0, 3).toUpperCase(), px + (MINING_TILE_SIZE / 2), py + MINING_TILE_SIZE - 6);
+  }
+}
+
+function handleMiningCanvasClick(event) {
+  const canvas = event.currentTarget;
+  if (!(canvas instanceof HTMLCanvasElement)) return;
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!session || !player || player.status !== "active" || !session.map) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  const col = Math.floor(localX / MINING_TILE_SIZE);
+  const row = Math.floor(localY / MINING_TILE_SIZE);
+  const originX = Math.max(0, player.x - MINING_VIEW_RADIUS);
+  const originY = Math.max(0, player.y - MINING_VIEW_RADIUS);
+  const targetX = originX + col;
+  const targetY = originY + row;
+  const tile = getMiningTile(session.map, targetX, targetY);
+  if (!tile || Math.abs(player.x - targetX) + Math.abs(player.y - targetY) !== 1) return;
+
+  const mole = (session.moles || []).find((entry) => entry.x === targetX && entry.y === targetY);
+  if (mole) {
+    void performMiningAction("attack", { targetId: mole.id });
+    return;
+  }
+  if (tile.kind === "wall") {
+    void performMiningAction("mine", { x: targetX, y: targetY });
+    return;
+  }
+  const direction = getMiningDirection(player, { x: targetX, y: targetY });
+  if (direction) {
+    void performMiningAction("move", { direction });
+  }
+}
+
+function handleGlobalKeydown(event) {
+  if (!isCasinoMiningView()) return;
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!session || !player || player.status !== "active") return;
+
+  const key = String(event.key || "").toLowerCase();
+  const direction = {
+    arrowup: "up",
+    w: "up",
+    arrowdown: "down",
+    s: "down",
+    arrowleft: "left",
+    a: "left",
+    arrowright: "right",
+    d: "right"
+  }[key];
+
+  if (direction) {
+    event.preventDefault();
+    void performMiningAction("move", { direction });
+    return;
+  }
+
+  if (key === " ") {
+    event.preventDefault();
+    const targetTile = getPreferredMiningTarget(session, player);
+    if (targetTile) {
+      void performMiningAction("mine", { x: targetTile.x, y: targetTile.y });
+    }
+    return;
+  }
+
+  if (key === "f") {
+    event.preventDefault();
+    const mole = getAdjacentMole(session, player);
+    if (mole) {
+      void performMiningAction("attack", { targetId: mole.id });
+    }
+    return;
+  }
+
+  if (key === "e") {
+    const standingTile = getMiningTile(session.map, player.x, player.y);
+    if (standingTile?.kind === "exit") {
+      event.preventDefault();
+      void performMiningAction("extract");
+    }
+  }
+}
+
+function getPreferredMiningTarget(session, player) {
+  const candidates = [
+    { x: player.x + 1, y: player.y },
+    { x: player.x - 1, y: player.y },
+    { x: player.x, y: player.y + 1 },
+    { x: player.x, y: player.y - 1 }
+  ];
+  return candidates.find((entry) => getMiningTile(session.map, entry.x, entry.y)?.kind === "wall") || null;
+}
+
+function getAdjacentMole(session, player) {
+  return (session.moles || []).find((entry) => Math.abs(entry.x - player.x) + Math.abs(entry.y - player.y) === 1) || null;
+}
+
+function getMiningDirection(from, to) {
+  if (to.x === from.x && to.y === from.y - 1) return "up";
+  if (to.x === from.x && to.y === from.y + 1) return "down";
+  if (to.x === from.x - 1 && to.y === from.y) return "left";
+  if (to.x === from.x + 1 && to.y === from.y) return "right";
+  return "";
+}
+
+function getMiningTileColor(tile) {
+  if (!tile) return "#13141a";
+  if (tile.kind === "floor") return "#242833";
+  if (tile.kind === "exit") return "#4f8d5a";
+  const oreColors = {
+    stone: "#525867",
+    coal: "#2f323a",
+    copper: "#9a5f3e",
+    iron: "#727d8e",
+    amber: "#c27b26",
+    sapphire: "#3f67cf",
+    ruby: "#b93854",
+    starsteel: "#4ac7d9"
+  };
+  return oreColors[tile.oreId] || "#525867";
+}
+
+function getMiningSlotLabel(slot) {
+  const labels = {
+    armor: "Zirh",
+    boots: "Ayakkabi",
+    bag: "Canta",
+    tool: "Alet",
+    pickaxe: "Kazma"
+  };
+  return labels[slot] || slot;
+}
+
+function formatDurationLabel(ms) {
+  const safeMs = Math.max(0, Math.round(Number(ms || 0)));
+  const totalSeconds = Math.ceil(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes ? `${minutes}dk ${String(seconds).padStart(2, "0")}sn` : `${seconds}sn`;
 }
 
 async function persistInteractiveGameUpdate(message, nextContent) {

@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import express from "express";
 import dragonHandler from "../api/dragon.js";
+import miningHandler from "../api/mining.js";
 import { appendMessage, listScopeChannels, updateMessage } from "./storage.js";
 
 dotenv.config();
@@ -107,6 +108,10 @@ app.post("/api/token", async (req, res) => {
 
 app.all("/api/dragon", async (req, res) => {
   await dragonHandler(req, res);
+});
+
+app.all("/api/mining", async (req, res) => {
+  await miningHandler(req, res);
 });
 
 app.listen(port, () => {

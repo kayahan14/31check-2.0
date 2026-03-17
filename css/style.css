@@ -1144,6 +1144,295 @@ svg { display: block; }
   background: linear-gradient(90deg, rgba(255, 243, 171, 0.95), rgba(255, 147, 59, 0.92), rgba(255, 83, 37, 0.88));
   box-shadow: 0 0 22px rgba(255, 126, 45, 0.28);
 }
+.mining-screen {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 100%;
+  padding: 18px;
+  overflow: hidden;
+}
+.mining-shell {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mining-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.mining-title {
+  color: var(--text-main);
+  font-size: 32px;
+  font-weight: 900;
+}
+.mining-subtitle {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.mining-wallet,
+.mining-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 214, 123, 0.14);
+  border: 1px solid rgba(255, 214, 123, 0.22);
+  color: #ffd98e;
+  font-weight: 900;
+}
+.mining-pill.is-danger {
+  background: rgba(229, 83, 102, 0.16);
+  border-color: rgba(229, 83, 102, 0.24);
+  color: #ffb0bd;
+}
+.mining-header-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.mining-menu-switch {
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mining-menu-tab {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+.mining-menu-tab.active {
+  background: rgba(255, 213, 118, 0.14);
+  color: #ffe1a4;
+}
+.mining-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 14px;
+}
+.mining-active-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+}
+.mining-stage-card,
+.mining-card {
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(54, 57, 66, 0.98), rgba(39, 41, 48, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+.mining-card {
+  padding: 18px;
+}
+.mining-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  justify-content: center;
+  min-height: 260px;
+  background:
+    radial-gradient(circle at 72% 18%, rgba(108, 204, 255, 0.14), transparent 24%),
+    radial-gradient(circle at 20% 78%, rgba(255, 174, 93, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(45, 48, 56, 0.98), rgba(33, 35, 42, 0.98));
+}
+.mining-hero-copy strong,
+.mining-panel-title {
+  color: var(--text-main);
+  font-size: 18px;
+  font-weight: 900;
+}
+.mining-hero-copy p,
+.mining-slot-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.mining-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 214, 123, 0.14);
+  color: #ffd98e;
+  font-size: 12px;
+  font-weight: 900;
+}
+.mining-summary-chip.is-loss {
+  background: rgba(229, 83, 102, 0.16);
+  color: #ffadb8;
+}
+.mining-summary-chip.is-win {
+  background: rgba(67, 181, 129, 0.16);
+  color: #9de9bc;
+}
+.mining-lobby-card,
+.mining-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mining-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.mining-stat {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.mining-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.mining-stat strong {
+  color: var(--text-main);
+  font-size: 20px;
+  font-weight: 900;
+}
+.mining-roster,
+.mining-objective-list,
+.mining-info-stack,
+.mining-shop-list,
+.mining-slot-grid {
+  margin-top: 14px;
+}
+.mining-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mining-roster.compact {
+  margin-top: 12px;
+}
+.mining-roster-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-body);
+  font-size: 12px;
+  font-weight: 800;
+}
+.mining-roster-pill.is-win {
+  background: rgba(67, 181, 129, 0.18);
+  color: #9ff0c1;
+}
+.mining-roster-pill.is-loss {
+  background: rgba(229, 83, 102, 0.18);
+  color: #ffb6c0;
+}
+.mining-lobby-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+.mining-stage-card {
+  padding: 18px;
+}
+.mining-canvas {
+  display: block;
+  width: min(100%, 720px);
+  margin: 0 auto;
+  aspect-ratio: 1 / 1;
+  border-radius: 18px;
+  background: #17141d;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mining-stage-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 18px;
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.mining-objective-list,
+.mining-info-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mining-objective-list span,
+.mining-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-body);
+  font-size: 13px;
+}
+.mining-shop-list {
+  display: grid;
+  gap: 10px;
+}
+.mining-shop-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.mining-shop-item strong {
+  color: var(--text-main);
+}
+.mining-shop-item span,
+.mining-shop-item small {
+  color: var(--text-muted);
+}
+.mining-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.mining-slot-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 96px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.mining-slot-card span {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.mining-slot-card strong {
+  color: var(--text-main);
+  font-size: 15px;
+}
 .dragon-flame-meter {
   position: absolute;
   left: 58%;
@@ -1781,7 +2070,7 @@ svg { display: block; }
 .icon-danger:hover { color: var(--danger-btn-hover); }
 
 @media (max-width: 1080px) {
-  .app:not(.is-dragon-view) .members { display: none; }
+  .app:not(.is-casino-view) .members { display: none; }
 }
 
 @media (max-width: 760px) {
@@ -1861,53 +2150,73 @@ svg { display: block; }
   .dragon-scene-multiplier {
     font-size: 32px;
   }
-  .app.is-dragon-view {
+  .mining-screen {
+    padding: 12px;
+  }
+  .mining-main-grid,
+  .mining-active-grid {
+    grid-template-columns: 1fr;
+  }
+  .mining-header {
+    flex-direction: column;
+  }
+  .mining-header-pills {
+    justify-content: flex-start;
+  }
+  .mining-stat-row {
+    grid-template-columns: 1fr;
+  }
+  .mining-slot-grid {
+    grid-template-columns: 1fr;
+  }
+  .app.is-casino-view {
     height: 100vh;
     min-height: 100vh;
     flex-direction: row;
     overflow: hidden;
   }
-  .app.is-dragon-view .sidebar {
+  .app.is-casino-view .sidebar {
     width: 72px;
     min-width: 72px;
     max-width: 72px;
   }
-  .app.is-dragon-view .sidebar-top,
-  .app.is-dragon-view .runtime-banner,
-  .app.is-dragon-view .section:first-of-type,
-  .app.is-dragon-view .channel-label,
-  .app.is-dragon-view .user-meta {
+  .app.is-casino-view .sidebar-top,
+  .app.is-casino-view .runtime-banner,
+  .app.is-casino-view .section:first-of-type,
+  .app.is-casino-view .channel-label,
+  .app.is-casino-view .user-meta {
     display: none;
   }
-  .app.is-dragon-view .sidebar-scroll {
+  .app.is-casino-view .sidebar-scroll {
     overflow: hidden;
     padding-bottom: 8px;
   }
-  .app.is-dragon-view .section {
+  .app.is-casino-view .section {
     padding: 10px 6px 0;
   }
-  .app.is-dragon-view .section-header,
-  .app.is-dragon-view .channel,
-  .app.is-dragon-view .current-user {
+  .app.is-casino-view .section-header,
+  .app.is-casino-view .channel,
+  .app.is-casino-view .current-user {
     justify-content: center;
   }
-  .app.is-dragon-view .section-title span {
+  .app.is-casino-view .section-title span {
     display: none;
   }
-  .app.is-dragon-view .channel {
+  .app.is-casino-view .channel {
     padding-inline: 8px;
   }
-  .app.is-dragon-view .sidebar-footer {
+  .app.is-casino-view .sidebar-footer {
     padding-inline: 6px;
   }
-  .app.is-dragon-view .main,
-  .app.is-dragon-view .main-panel {
+  .app.is-casino-view .main,
+  .app.is-casino-view .main-panel {
     min-height: 0;
   }
-  .app.is-dragon-view .main-panel {
+  .app.is-casino-view .main-panel {
     flex-direction: row;
   }
-  .app.is-dragon-view .dragon-screen {
+  .app.is-casino-view .dragon-screen,
+  .app.is-casino-view .mining-screen {
     padding: 8px;
   }
 }
