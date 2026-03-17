@@ -320,7 +320,7 @@ function deserializeContent(content, type) {
   }
 
   const normalizedType = String(type || "");
-  if (!normalizedType.startsWith("blackjack") && !normalizedType.startsWith("mines") && !normalizedType.startsWith("dragon")) {
+  if (!shouldParseStructuredContent(normalizedType, content)) {
     return content;
   }
 
@@ -337,4 +337,24 @@ function normalizeContent(content) {
   }
 
   return content ?? "";
+}
+
+function shouldParseStructuredContent(type, content) {
+  if (!type || type === "text") {
+    return false;
+  }
+
+  if (
+    type.startsWith("blackjack")
+    || type.startsWith("mines")
+    || type.startsWith("dragon")
+    || type.startsWith("mining")
+    || type.endsWith("_session")
+    || type.endsWith("_profile")
+  ) {
+    return true;
+  }
+
+  const trimmed = String(content || "").trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
 }
