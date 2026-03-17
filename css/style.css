@@ -949,10 +949,10 @@ svg { display: block; }
   font-size: 13px;
 }
 .dragon-history-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 6px;
+  padding: 10px 12px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -962,13 +962,14 @@ svg { display: block; }
   font-size: 13px;
 }
 .dragon-history-pill {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  font-size: 12px;
+  min-height: 26px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 11px;
   font-weight: 900;
   letter-spacing: 0.01em;
 }
@@ -1090,9 +1091,8 @@ svg { display: block; }
   display: flex;
   min-width: 0;
   min-height: 100%;
-  padding: 24px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  padding: clamp(12px, 2vh, 20px) clamp(12px, 1.6vw, 20px);
+  overflow: hidden;
 }
 .dragon-screen-inner,
 .dragon-hub-empty {
@@ -1102,15 +1102,15 @@ svg { display: block; }
 .dragon-screen-inner {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: clamp(8px, 1.2vh, 12px);
   min-width: 0;
-  padding-bottom: 24px;
+  justify-content: center;
 }
 .dragon-screen .dragon-modal-scene {
-  min-height: 320px;
+  min-height: clamp(220px, 36vh, 320px);
 }
 .dragon-hub-scene {
-  min-height: 360px;
+  min-height: clamp(240px, 40vh, 360px);
   background:
     radial-gradient(circle at 58% 50%, rgba(255, 173, 78, 0.24), transparent 18%),
     radial-gradient(circle at 30% 48%, rgba(255, 112, 57, 0.14), transparent 28%),
@@ -1817,26 +1817,25 @@ svg { display: block; }
   }
   .dragon-screen {
     min-height: auto;
-    padding: 16px;
-    align-items: flex-start;
+    padding: 12px;
+    align-items: stretch;
   }
   .dragon-screen-inner {
     width: 100%;
-    padding-bottom: 16px;
   }
   .dragon-screen .dragon-modal-scene {
-    min-height: 240px;
+    min-height: clamp(210px, 30vh, 240px);
   }
   .dragon-hub-scene {
-    min-height: 280px;
+    min-height: clamp(220px, 32vh, 280px);
   }
   .dragon-history-strip {
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    padding-bottom: 10px;
+    grid-template-columns: repeat(10, minmax(0, 1fr));
   }
   .dragon-history-pill {
-    flex: 0 0 auto;
+    min-height: 24px;
+    padding: 0 6px;
+    font-size: 10px;
   }
   .dragon-modal-stats {
     grid-template-columns: 1fr;
@@ -1861,6 +1860,55 @@ svg { display: block; }
   }
   .dragon-scene-multiplier {
     font-size: 32px;
+  }
+  .app.is-dragon-view {
+    height: 100vh;
+    min-height: 100vh;
+    flex-direction: row;
+    overflow: hidden;
+  }
+  .app.is-dragon-view .sidebar {
+    width: 72px;
+    min-width: 72px;
+    max-width: 72px;
+  }
+  .app.is-dragon-view .sidebar-top,
+  .app.is-dragon-view .runtime-banner,
+  .app.is-dragon-view .section:first-of-type,
+  .app.is-dragon-view .channel-label,
+  .app.is-dragon-view .user-meta {
+    display: none;
+  }
+  .app.is-dragon-view .sidebar-scroll {
+    overflow: hidden;
+    padding-bottom: 8px;
+  }
+  .app.is-dragon-view .section {
+    padding: 10px 6px 0;
+  }
+  .app.is-dragon-view .section-header,
+  .app.is-dragon-view .channel,
+  .app.is-dragon-view .current-user {
+    justify-content: center;
+  }
+  .app.is-dragon-view .section-title span {
+    display: none;
+  }
+  .app.is-dragon-view .channel {
+    padding-inline: 8px;
+  }
+  .app.is-dragon-view .sidebar-footer {
+    padding-inline: 6px;
+  }
+  .app.is-dragon-view .main,
+  .app.is-dragon-view .main-panel {
+    min-height: 0;
+  }
+  .app.is-dragon-view .main-panel {
+    flex-direction: row;
+  }
+  .app.is-dragon-view .dragon-screen {
+    padding: 8px;
   }
 }
 

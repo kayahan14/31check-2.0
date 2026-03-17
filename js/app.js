@@ -1,4 +1,5 @@
 ﻿import { DiscordSDK, Events } from "@discord/embedded-app-sdk";
+import { DEFAULT_DRAGON_CONFIG, normalizeDragonConfig } from "../shared/dragon-config.js";
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://hjlxrgzxyafedqamlzer.supabase.co";
@@ -62,21 +63,6 @@ const DRAGON_SPEED_STAGES = [
   { multiplier: 5, speed: 1.5 }
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
-const DEFAULT_DRAGON_CONFIG = {
-  lobbyMs: 10000,
-  speedFactor: 0.35,
-  luckyChancePercent: 5,
-  luckyCrashPerThousand: 1,
-  lowCapMultiplier: 1.15,
-  lowCrashPerThousand: 20,
-  midCapMultiplier: 3,
-  midCrashPerThousand: 7,
-  highCapMultiplier: 10,
-  highCrashPerThousand: 5,
-  ultraCrashPerThousand: 3,
-  testMode: false,
-  testMaxMultiplier: 1.1
-};
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
@@ -111,6 +97,7 @@ const state = {
   dragonRealtimeReady: false,
   dragonConfig: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
+  dragonConfigUpdatedAtMs: 0,
   dragonRecentResults: [],
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
@@ -3222,30 +3209,6 @@ function formatDecimalInput(value) {
   return normalizeDragonAutoCashoutTarget(value).toFixed(2);
 }
 
-function normalizeDragonConfig(config) {
-  const next = config || {};
-  const luckyChancePercent = Math.min(100, Math.max(0, Math.round(Number(next.luckyChancePercent ?? DEFAULT_DRAGON_CONFIG.luckyChancePercent))));
-  const luckyCrashPerThousand = Math.min(999, Math.max(1, Math.round(Number(next.luckyCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.luckyCrashPerThousand))));
-  const lowCapMultiplier = Math.max(1.01, Math.round(Number(next.lowCapMultiplier ?? DEFAULT_DRAGON_CONFIG.lowCapMultiplier) * 100) / 100);
-  const midCapMultiplier = Math.max(lowCapMultiplier + 0.01, Math.round(Number(next.midCapMultiplier ?? DEFAULT_DRAGON_CONFIG.midCapMultiplier) * 100) / 100);
-  const highCapMultiplier = Math.max(midCapMultiplier + 0.01, Math.round(Number(next.highCapMultiplier ?? DEFAULT_DRAGON_CONFIG.highCapMultiplier) * 100) / 100);
-  return {
-    lobbyMs: Math.min(60000, Math.max(1000, Math.round(Number(next.lobbyMs ?? DEFAULT_DRAGON_CONFIG.lobbyMs)))),
-    speedFactor: Math.min(5, Math.max(0.1, Math.round(Number(next.speedFactor ?? DEFAULT_DRAGON_CONFIG.speedFactor) * 100) / 100)),
-    luckyChancePercent,
-    luckyCrashPerThousand,
-    lowCapMultiplier,
-    lowCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.lowCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.lowCrashPerThousand)))),
-    midCapMultiplier,
-    midCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.midCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.midCrashPerThousand)))),
-    highCapMultiplier,
-    highCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.highCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.highCrashPerThousand)))),
-    ultraCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.ultraCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.ultraCrashPerThousand)))),
-    testMode: Boolean(next.testMode),
-    testMaxMultiplier: Math.min(10, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
-  };
-}
-
 function getDragonEffectiveElapsedForMultiplier(targetMultiplier) {
   const safeTarget = Math.max(1, Number(targetMultiplier || 1));
   const discriminant = (0.09 * 0.09) + (4 * 0.03 * (safeTarget - 1));
@@ -3300,11 +3263,19 @@ function getDragonEffectiveElapsed(game, now = getDragonNow()) {
   return baseBeforeAcceleration + (acceleratedSeconds * DRAGON_ALL_CASHED_OUT_SPEED);
 }
 
-function syncDragonConfigFromServer(config, { overwriteDraft = true } = {}) {
+function syncDragonConfigFromServer(config, { overwriteDraft = true, updatedAtMs = 0 } = {}) {
+  const nextUpdatedAtMs = Number(updatedAtMs || 0);
+  if (nextUpdatedAtMs && nextUpdatedAtMs < Number(state.dragonConfigUpdatedAtMs || 0)) {
+    return;
+  }
+
   const normalized = normalizeDragonConfig(config);
   const previousConfig = JSON.stringify(state.dragonConfig || {});
   const nextConfig = JSON.stringify(normalized);
   state.dragonConfig = normalized;
+  if (nextUpdatedAtMs) {
+    state.dragonConfigUpdatedAtMs = nextUpdatedAtMs;
+  }
   if (overwriteDraft) {
     state.dragonConfigDraft = normalizeDragonConfig(normalized);
   }
@@ -3392,7 +3363,10 @@ function applyDragonTransportPayload(payload, options = {}) {
     state.dragonRoundSessionId = "";
   }
   if (payload?.config) {
-    syncDragonConfigFromServer(payload.config, { overwriteDraft });
+    syncDragonConfigFromServer(payload.config, {
+      overwriteDraft,
+      updatedAtMs: Number(payload?.configUpdatedAtMs || 0)
+    });
   }
   if (Array.isArray(payload?.recentResults)) {
     state.dragonRecentResults = payload.recentResults.map((entry) => normalizeDragonHistoryEntry(entry));
@@ -3435,6 +3409,7 @@ async function broadcastDragonTransportPayload(payload) {
       payload: {
         session: payload?.session || null,
         config: payload?.config || state.dragonConfig,
+        configUpdatedAtMs: Number(payload?.configUpdatedAtMs || state.dragonConfigUpdatedAtMs || 0),
         recentResults: Array.isArray(payload?.recentResults) ? payload.recentResults : state.dragonRecentResults,
         serverNowMs: payload?.serverNowMs || getDragonNow()
       }

@@ -1,10 +1,10 @@
+import { DEFAULT_DRAGON_CONFIG, normalizeDragonConfig } from "../shared/dragon-config.js";
 import { appendMessage, listScopeChannels, updateMessage } from "../server/storage.js";
 
 const DRAGON_CHANNEL_ID = "casino:dragon";
 const DRAGON_TYPE = "dragon_state";
 const DRAGON_CONFIG_TYPE = "dragon_config";
 const BASE_STAKE = 100;
-const LOBBY_MS = 10000;
 const DRAGON_SPEED_STAGES = [
   { multiplier: 1.5, speed: 0.45 },
   { multiplier: 1.75, speed: 0.5 },
@@ -15,22 +15,6 @@ const DRAGON_SPEED_STAGES = [
   { multiplier: 5, speed: 1.5 }
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
-const DEFAULT_DRAGON_CONFIG = {
-  lobbyMs: LOBBY_MS,
-  speedFactor: 0.35,
-  luckyChancePercent: 5,
-  luckyCrashPerThousand: 1,
-  lowCapMultiplier: 1.15,
-  lowCrashPerThousand: 20,
-  midCapMultiplier: 3,
-  midCrashPerThousand: 7,
-  highCapMultiplier: 10,
-  highCrashPerThousand: 5,
-  ultraCrashPerThousand: 3,
-  testMode: false,
-  testMaxMultiplier: 1.1
-};
-
 globalThis.__dragonQueues ||= {};
 
 export default async function handler(req, res) {
@@ -41,9 +25,9 @@ export default async function handler(req, res) {
       const scopeKey = String(req.query.scopeKey || "local-preview");
       const serverNowMs = Date.now();
       const session = await getCurrentDragonSession(scopeKey);
-      const config = await getDragonConfig(scopeKey);
+      const { config, updatedAtMs: configUpdatedAtMs } = await getDragonConfigPayload(scopeKey);
       const recentResults = await getDragonRecentResults(scopeKey, serverNowMs);
-      res.status(200).json({ ok: true, session, config, recentResults, serverNowMs });
+      res.status(200).json({ ok: true, session, config, configUpdatedAtMs, recentResults, serverNowMs });
       return;
     }
 
@@ -70,6 +54,7 @@ export default async function handler(req, res) {
         ok: true,
         session: result.session,
         config: result.config,
+        configUpdatedAtMs: result.configUpdatedAtMs,
         recentResults: result.recentResults,
         serverNowMs: result.serverNowMs
       });
@@ -100,42 +85,35 @@ async function withDragonQueue(scopeKey, worker) {
 
 async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
   const current = await getCurrentDragonSession(scopeKey);
-  const currentConfig = await getDragonConfig(scopeKey);
+  const currentConfigPayload = await getDragonConfigPayload(scopeKey);
+  const currentConfig = currentConfigPayload.config;
   const normalizedActor = {
     id: String(actor?.id || "user"),
     name: String(actor?.name || "Oyuncu")
   };
   const now = Date.now();
+  const makeResult = async (session, config = currentConfig, configUpdatedAtMs = currentConfigPayload.updatedAtMs) => ({
+    session,
+    config,
+    configUpdatedAtMs,
+    recentResults: await getDragonRecentResults(scopeKey, now),
+    serverNowMs: now
+  });
 
   if (action === "save_config") {
     const nextConfig = normalizeDragonConfig(meta.config);
-    await saveDragonConfig(scopeKey, nextConfig, normalizedActor, now);
-    return {
-      session: current,
-      config: nextConfig,
-      recentResults: await getDragonRecentResults(scopeKey, now),
-      serverNowMs: now
-    };
+    const savedConfig = await saveDragonConfig(scopeKey, nextConfig, normalizedActor, now);
+    return makeResult(current, nextConfig, Number(savedConfig?.serverCreatedAtMs || savedConfig?.createdAtMs || now));
   }
 
   if (!current || getDragonPhase(current.content, now) === "finished") {
     if (action !== "start") {
-      return {
-        session: current,
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult(current);
     }
 
     const message = makeDragonMessage(normalizedActor, now, currentConfig);
     const session = await appendMessage(scopeKey, DRAGON_CHANNEL_ID, message);
-    return {
-      session,
-      config: currentConfig,
-      recentResults: await getDragonRecentResults(scopeKey, now),
-      serverNowMs: now
-    };
+    return makeResult(session);
   }
 
   const game = normalizeDragonState(current.content, now);
@@ -145,70 +123,35 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       game.participants.push(makeParticipant(normalizedActor));
       game.revision += 1;
       const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
-      return {
-        session,
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult(session);
     }
 
-    return {
-      session: current,
-      config: currentConfig,
-      recentResults: await getDragonRecentResults(scopeKey, now),
-      serverNowMs: now
-    };
+    return makeResult(current);
   }
 
   if (action === "join") {
     if (getDragonPhase(game, now) !== "lobby") {
-      return {
-        session: { ...current, content: game },
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult({ ...current, content: game });
     }
 
     if (!game.participants.some((entry) => entry.id === normalizedActor.id)) {
       game.participants.push(makeParticipant(normalizedActor));
       game.revision += 1;
       const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
-      return {
-        session,
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult(session);
     }
 
-    return {
-      session: { ...current, content: game },
-      config: currentConfig,
-      recentResults: await getDragonRecentResults(scopeKey, now),
-      serverNowMs: now
-    };
+    return makeResult({ ...current, content: game });
   }
 
   if (action === "cashout") {
     if (getDragonPhase(game, now) !== "playing") {
-      return {
-        session: { ...current, content: game },
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult({ ...current, content: game });
     }
 
     const participant = game.participants.find((entry) => entry.id === normalizedActor.id);
     if (!participant || participant.status !== "joined") {
-      return {
-        session: { ...current, content: game },
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult({ ...current, content: game });
     }
 
     if (shouldDragonCrash(game, now)) {
@@ -218,12 +161,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       game.participants = game.participants.map((entry) => entry.status === "joined" ? { ...entry, status: "crashed" } : entry);
       game.revision += 1;
       const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
-      return {
-        session,
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult(session);
     }
 
     const liveMultiplier = getDragonLiveMultiplier(game, now);
@@ -242,12 +180,7 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
     game.revision += 1;
 
     const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
-    return {
-      session,
-      config: currentConfig,
-      recentResults: await getDragonRecentResults(scopeKey, now),
-      serverNowMs: now
-    };
+    return makeResult(session);
   }
 
   if (action === "resolve") {
@@ -258,28 +191,13 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
       game.participants = game.participants.map((entry) => entry.status === "joined" ? { ...entry, status: "crashed" } : entry);
       game.revision += 1;
       const session = await updateMessage(scopeKey, current.id, { ...current, content: game });
-      return {
-        session,
-        config: currentConfig,
-        recentResults: await getDragonRecentResults(scopeKey, now),
-        serverNowMs: now
-      };
+      return makeResult(session);
     }
 
-    return {
-      session: { ...current, content: game },
-      config: currentConfig,
-      recentResults: await getDragonRecentResults(scopeKey, now),
-      serverNowMs: now
-    };
+    return makeResult({ ...current, content: game });
   }
 
-  return {
-    session: { ...current, content: game },
-    config: currentConfig,
-    recentResults: await getDragonRecentResults(scopeKey, now),
-    serverNowMs: now
-  };
+  return makeResult({ ...current, content: game });
 }
 
 async function getCurrentDragonSession(scopeKey) {
@@ -297,18 +215,24 @@ async function getCurrentDragonSession(scopeKey) {
   };
 }
 
-async function getDragonConfig(scopeKey) {
+async function getDragonConfigPayload(scopeKey) {
   const channels = await listScopeChannels(scopeKey);
   const configs = Object.values(channels || {})
     .flat()
     .filter((message) => message?.channelId === DRAGON_CHANNEL_ID && message?.type === DRAGON_CONFIG_TYPE);
 
   if (!configs.length) {
-    return normalizeDragonConfig(DEFAULT_DRAGON_CONFIG);
+    return {
+      config: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
+      updatedAtMs: 0
+    };
   }
 
   const latest = [...configs].sort((left, right) => Number(right.serverCreatedAtMs || 0) - Number(left.serverCreatedAtMs || 0))[0];
-  return normalizeDragonConfig(latest.content);
+  return {
+    config: normalizeDragonConfig(latest.content),
+    updatedAtMs: Number(latest.serverCreatedAtMs || latest.createdAtMs || 0)
+  };
 }
 
 async function getDragonRecentResults(scopeKey, now = Date.now()) {
@@ -363,6 +287,10 @@ async function saveDragonConfig(scopeKey, config, actor, now) {
     ...latest,
     author: actor.name,
     avatar: actor.name,
+    createdAt: new Date(now).toISOString(),
+    createdAtMs: now,
+    serverCreatedAt: new Date(now).toISOString(),
+    serverCreatedAtMs: now,
     content: normalizeDragonConfig(config)
   });
 }
@@ -434,30 +362,6 @@ function normalizeDragonState(content, now = Date.now()) {
   }
 
   return game;
-}
-
-function normalizeDragonConfig(config) {
-  const next = config || {};
-  const luckyChancePercent = Math.min(100, Math.max(0, Math.round(Number(next.luckyChancePercent ?? DEFAULT_DRAGON_CONFIG.luckyChancePercent))));
-  const luckyCrashPerThousand = Math.min(999, Math.max(1, Math.round(Number(next.luckyCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.luckyCrashPerThousand))));
-  const lowCapMultiplier = Math.max(1.01, Math.round(Number(next.lowCapMultiplier ?? DEFAULT_DRAGON_CONFIG.lowCapMultiplier) * 100) / 100);
-  const midCapMultiplier = Math.max(lowCapMultiplier + 0.01, Math.round(Number(next.midCapMultiplier ?? DEFAULT_DRAGON_CONFIG.midCapMultiplier) * 100) / 100);
-  const highCapMultiplier = Math.max(midCapMultiplier + 0.01, Math.round(Number(next.highCapMultiplier ?? DEFAULT_DRAGON_CONFIG.highCapMultiplier) * 100) / 100);
-  return {
-    lobbyMs: Math.min(60000, Math.max(1000, Math.round(Number(next.lobbyMs ?? DEFAULT_DRAGON_CONFIG.lobbyMs)))),
-    speedFactor: Math.min(5, Math.max(0.1, Math.round(Number(next.speedFactor ?? DEFAULT_DRAGON_CONFIG.speedFactor) * 100) / 100)),
-    luckyChancePercent,
-    luckyCrashPerThousand,
-    lowCapMultiplier,
-    lowCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.lowCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.lowCrashPerThousand)))),
-    midCapMultiplier,
-    midCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.midCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.midCrashPerThousand)))),
-    highCapMultiplier,
-    highCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.highCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.highCrashPerThousand)))),
-    ultraCrashPerThousand: Math.min(999, Math.max(1, Math.round(Number(next.ultraCrashPerThousand ?? DEFAULT_DRAGON_CONFIG.ultraCrashPerThousand)))),
-    testMode: Boolean(next.testMode),
-    testMaxMultiplier: Math.min(10, Math.max(1.1, Math.round(Number(next.testMaxMultiplier ?? DEFAULT_DRAGON_CONFIG.testMaxMultiplier) * 100) / 100))
-  };
 }
 
 function getDragonEffectiveElapsedForMultiplier(targetMultiplier) {
