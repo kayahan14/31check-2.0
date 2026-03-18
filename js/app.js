@@ -453,8 +453,12 @@ async function initializeRuntime() {
 
   try {
     state.discordSdk = new DiscordSDK(DISCORD_CLIENT_ID);
+    state.runtimeNote = "Discord istemcisi hazirlaniyor...";
+    render();
     await state.discordSdk.ready();
 
+    state.runtimeNote = "Discord kimlik dogrulamasi basliyor...";
+    render();
     const auth = await authenticateWithDiscord();
     hydrateCurrentUser(auth);
 
@@ -527,28 +531,54 @@ function isDedicatedCasinoScreen() {
 }
 
 async function authenticateWithDiscord() {
-  const { code } = await state.discordSdk.commands.authorize({
-    client_id: DISCORD_CLIENT_ID,
-    response_type: "code",
-    state: `31check-activity-${Date.now()}`,
-    prompt: "none",
-    scope: ["identify", "guilds", "guilds.members.read"]
-  });
+  let oauthError = null;
 
-  const response = await fetch(buildFrontendApiUrl("/api/token"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code })
-  });
+  try {
+    state.runtimeNote = "Discord izin penceresi aciliyor...";
+    render();
+    const { code } = await state.discordSdk.commands.authorize({
+      client_id: DISCORD_CLIENT_ID,
+      response_type: "code",
+      state: `31check-activity-${Date.now()}`,
+      prompt: "none",
+      scope: ["identify"]
+    });
 
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.details?.error_description || payload.error || "Discord token exchange failed.");
+    state.runtimeNote = "Discord token aliniyor...";
+    render();
+    const response = await fetch(buildFrontendApiUrl("/api/token"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.details?.error_description || payload.error || "Discord token exchange failed.");
+    }
+
+    const token = await response.json();
+    state.runtimeNote = "Discord oturumu dogrulaniyor...";
+    render();
+    const auth = await state.discordSdk.commands.authenticate({ access_token: token.access_token });
+    return { ...auth, access_token: token.access_token };
+  } catch (error) {
+    oauthError = error;
+    console.warn("OAuth auth failed, trying direct SDK authenticate.", error);
   }
 
-  const token = await response.json();
-  const auth = await state.discordSdk.commands.authenticate({ access_token: token.access_token });
-  return { ...auth, access_token: token.access_token };
+  try {
+    state.runtimeNote = "Discord dogrudan kimlik dogrulamasi deneniyor...";
+    render();
+    const auth = await state.discordSdk.commands.authenticate({});
+    return { ...auth, access_token: auth?.access_token || "" };
+  } catch (fallbackError) {
+    const oauthMessage = String(oauthError?.message || oauthError || "");
+    const fallbackMessage = String(fallbackError?.message || fallbackError || "");
+    throw new Error(
+      `OAuth: ${oauthMessage || "basarisiz"} | SDK: ${fallbackMessage || "basarisiz"}`
+    );
+  }
 }
 
 function hydrateCurrentUser(auth) {
