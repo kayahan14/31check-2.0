@@ -17,9 +17,17 @@ const DRAGON_SPEED_STAGES = [
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 globalThis.__dragonQueues ||= {};
+const REMOTE_DRAGON_BACKEND_URL = process.env.VERCEL === "1"
+  ? String(process.env.BACKEND_PROXY_URL || process.env.MINING_BACKEND_URL || process.env.VITE_GAME_BACKEND_URL || "").trim().replace(/\/+$/, "")
+  : "";
 
 export default async function handler(req, res) {
   try {
+    if (REMOTE_DRAGON_BACKEND_URL) {
+      await proxyDragonRequest(req, res);
+      return;
+    }
+
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
 
     if (req.method === "GET") {
@@ -69,6 +77,33 @@ export default async function handler(req, res) {
       details: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+async function proxyDragonRequest(req, res) {
+  const targetUrl = new URL("/api/dragon", `${REMOTE_DRAGON_BACKEND_URL}/`);
+  for (const [key, value] of Object.entries(req.query || {})) {
+    if (Array.isArray(value)) {
+      value.forEach((entry) => targetUrl.searchParams.append(key, String(entry)));
+    } else if (value !== undefined && value !== null) {
+      targetUrl.searchParams.set(key, String(value));
+    }
+  }
+
+  const upstream = await fetch(targetUrl, {
+    method: req.method,
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: String(req.method || "GET").toUpperCase() === "GET"
+      ? undefined
+      : JSON.stringify(req.body || {})
+  });
+
+  const payload = await upstream.text();
+  res.status(upstream.status);
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json; charset=utf-8");
+  res.send(payload);
 }
 
 export async function getDragonTransportPayload(scopeKey) {

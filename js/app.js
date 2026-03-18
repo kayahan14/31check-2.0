@@ -2478,7 +2478,15 @@ function hasDirectRealtimeBackend() {
 }
 
   function buildGameApiUrl(path, query = {}) {
-  return buildBackendApiUrl(path, query);
+    if (isLocalFrontendDevelopment()) {
+      return buildBackendApiUrl(path, query);
+    }
+    const url = new URL(path, window.location.origin);
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value === undefined || value === null || value === "") continue;
+      url.searchParams.set(key, String(value));
+    }
+    return url.toString();
   }
 
   function buildMessagesApiUrl(query = {}) {
