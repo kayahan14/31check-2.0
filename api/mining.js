@@ -26,6 +26,9 @@ import {
 globalThis.__miningQueues ||= {};
 globalThis.__miningRuntimeStore ||= { scopes: {} };
 
+const REMOTE_MINING_BACKEND_URL = process.env.VERCEL === "1"
+  ? (process.env.MINING_BACKEND_URL || "http://46.62.159.126").replace(/\/+$/, "")
+  : "";
 const MINING_RUNTIME_TTL_MS = 15 * 60 * 1000;
 const MINING_PERSIST_INTERVAL_MS = 400;
 const MINING_CHECKPOINT_INTERVAL_MS = 2000;
@@ -38,6 +41,11 @@ function normalizeMiningScopeKey(scopeKey) {
 
 export default async function handler(req, res) {
   try {
+    if (REMOTE_MINING_BACKEND_URL) {
+      await proxyMiningRequest(req, res);
+      return;
+    }
+
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
 
     if (req.method === "GET") {
@@ -92,6 +100,38 @@ export default async function handler(req, res) {
       details: describeMiningError(error)
     });
   }
+}
+
+async function proxyMiningRequest(req, res) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(req.query || {})) {
+    if (Array.isArray(value)) {
+      value.forEach((entry) => query.append(key, String(entry)));
+    } else if (value !== undefined && value !== null) {
+      query.append(key, String(value));
+    }
+  }
+
+  const targetUrl = new URL(`${REMOTE_MINING_BACKEND_URL}/api/mining`);
+  if (String(req.method || "GET").toUpperCase() === "GET") {
+    targetUrl.search = query.toString();
+  }
+
+  const upstream = await fetch(targetUrl, {
+    method: req.method,
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: String(req.method || "GET").toUpperCase() === "GET"
+      ? undefined
+      : JSON.stringify(req.body || {})
+  });
+
+  const payload = await upstream.text();
+  res.status(upstream.status);
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json; charset=utf-8");
+  res.send(payload);
 }
 
 function describeMiningError(error) {

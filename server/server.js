@@ -7,7 +7,25 @@ import { appendMessage, listScopeChannels, updateMessage } from "./storage.js";
 dotenv.config();
 const app = express();
 const port = Number(process.env.PORT || 3001);
+const allowedOrigins = String(process.env.CORS_ORIGIN || "https://31check-2-0.vercel.app,http://localhost:5173,http://127.0.0.1:5173")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
 
+app.use((req, res, next) => {
+  const origin = String(req.headers.origin || "");
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 app.use(express.json());
 
 app.get("/api/health", (_req, res) => {
