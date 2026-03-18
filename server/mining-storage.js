@@ -146,7 +146,6 @@ async function getSupabaseRecord(scopeKey, id) {
       "server_created_at",
       "server_created_at_ms"
     ].join(","))
-    .eq("scope_key", scopeKey)
     .eq("id", id)
     .maybeSingle();
 
