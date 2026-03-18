@@ -3578,15 +3578,30 @@ function getMiningViewport(session, player) {
 function drawMiningQueuedPath(context, metrics) {
   if (!state.miningTargetTile) return;
   const { x, y } = state.miningTargetTile;
-  const rect = getMiningTileScreenRect(metrics, x, y);
-  if (!rect) return;
+  const screenX = (x - metrics.worldStartX) * metrics.tilePx;
+  const screenY = (y - metrics.worldStartY) * metrics.tilePx;
+  if (screenX < -20 || screenY < -20 || screenX > metrics.canvas.width + 20 || screenY > metrics.canvas.height + 20) return;
   const pulse = 0.5 + (Math.sin(getMiningNow() / 120) * 0.5);
+  const radius = metrics.tilePx * 0.12;
+  const armLen = metrics.tilePx * 0.22;
   context.save();
-  context.strokeStyle = `rgba(255, 248, 180, ${0.45 + (pulse * 0.4)})`;
-  context.lineWidth = Math.max(3, rect.size * 0.06);
-  context.setLineDash([rect.size * 0.22, rect.size * 0.14]);
-  context.strokeRect(rect.x + (rect.size * 0.08), rect.y + (rect.size * 0.08), rect.size * 0.84, rect.size * 0.84);
-  context.setLineDash([]);
+  context.globalAlpha = 0.5 + (pulse * 0.4);
+  context.strokeStyle = "#fff8b4";
+  context.lineWidth = Math.max(2, metrics.tilePx * 0.04);
+  context.beginPath();
+  context.moveTo(screenX - armLen, screenY);
+  context.lineTo(screenX - radius, screenY);
+  context.moveTo(screenX + radius, screenY);
+  context.lineTo(screenX + armLen, screenY);
+  context.moveTo(screenX, screenY - armLen);
+  context.lineTo(screenX, screenY - radius);
+  context.moveTo(screenX, screenY + radius);
+  context.lineTo(screenX, screenY + armLen);
+  context.stroke();
+  context.beginPath();
+  context.arc(screenX, screenY, radius * 0.35, 0, Math.PI * 2);
+  context.fillStyle = "#fff8b4";
+  context.fill();
   context.restore();
 }
 
