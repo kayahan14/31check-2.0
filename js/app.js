@@ -534,7 +534,7 @@ async function authenticateWithDiscord() {
     scope: ["identify", "guilds", "guilds.members.read"]
   });
 
-  const response = await fetch(buildBackendApiUrl("/api/token"), {
+  const response = await fetch("/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code })
