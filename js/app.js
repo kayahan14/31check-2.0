@@ -3090,6 +3090,9 @@ async function handleMiningUiAction(action) {
   if (action === "start_lobby" || action === "join_lobby" || action === "extract") {
     await performMiningAction(action);
   }
+  if (action === "leave_session") {
+    selectChannel("1");
+  }
 }
 
 async function performMiningAction(action, meta = {}, options = {}) {
@@ -3267,7 +3270,7 @@ function renderMiningRealtimeView() {
                 <strong>Yeni magara hazirla</strong>
                 <p>Magara kapanmadan cikabilirsen coinler cebe gider. Cikis bulunduğu anda geri sayim baslar.</p>
               </div>
-              <button type="button" class="btn dragon-modal-action" data-mining-action="start_lobby">test</button>
+              <button type="button" class="btn dragon-modal-action" data-mining-action="start_lobby">Magaayi Ac</button>
               ${session ? `<div class="mining-summary-chip ${phase === "collapsed" ? "is-loss" : "is-win"}">${escapeHtml(session.summary || "Son seans tamamlandi.")}</div>` : ""}
             </div>
             <div class="mining-card">
@@ -3295,6 +3298,7 @@ function renderMiningRealtimeView() {
             <div class="mining-stage-overlay mining-stage-overlay-right">
               <div id="miningStageHud" class="mining-stage-hud">${renderMiningStageHudPills(session, activePlayer)}</div>
               <div id="miningJoinActionHost">${joinAction}</div>
+              <button type="button" class="btn mining-exit-btn" data-mining-action="leave_session">Cikis</button>
             </div>
             <canvas id="miningCanvas" class="mining-canvas" width="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}" height="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}"></canvas>
             <div class="mining-stage-overlay mining-stage-overlay-bottom">

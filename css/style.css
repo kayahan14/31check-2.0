@@ -1515,6 +1515,19 @@ svg { display: block; }
 .mining-stage-overlay .mining-join-action {
   pointer-events: auto;
 }
+.mining-exit-btn {
+  pointer-events: auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 80, 100, 0.22);
+  border: 1px solid rgba(255, 140, 155, 0.28);
+  color: #ffd5db;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
 .mining-objective-list,
 .mining-info-stack {
   display: flex;
