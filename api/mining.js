@@ -19,12 +19,17 @@ import { appendMessage, listScopeMessages, updateMessage } from "../server/stora
 
 globalThis.__miningQueues ||= {};
 
+function normalizeMiningScopeKey(scopeKey) {
+  const normalized = String(scopeKey || "local-preview");
+  return normalized.startsWith("mining:") ? normalized : `mining:${normalized}:v2`;
+}
+
 export default async function handler(req, res) {
   try {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
 
     if (req.method === "GET") {
-      const scopeKey = String(req.query.scopeKey || "local-preview");
+      const scopeKey = normalizeMiningScopeKey(req.query.scopeKey);
       const actor = {
         id: String(req.query.actorId || ""),
         name: String(req.query.actorName || "Oyuncu")
@@ -41,7 +46,8 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const { scopeKey = "local-preview", action, actor, x, y, direction, targetId } = req.body || {};
+      const { action, actor, x, y, direction, targetId } = req.body || {};
+      const scopeKey = normalizeMiningScopeKey(req.body?.scopeKey);
       if (!action) {
         res.status(400).json({ error: "action is required." });
         return;

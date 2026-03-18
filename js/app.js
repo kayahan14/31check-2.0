@@ -2459,6 +2459,10 @@ async function initializeMiningTransport() {
   window.advanceTime = (ms) => new Promise((resolve) => window.setTimeout(resolve, Number(ms || 0)));
 }
 
+function getMiningScopeKey() {
+  return `mining:${state.scopeKey}:v2`;
+}
+
 async function loadMiningState({ initial = false } = {}) {
   if (initial) {
     state.miningStateLoading = true;
@@ -2466,7 +2470,7 @@ async function loadMiningState({ initial = false } = {}) {
   }
 
   try {
-    const response = await fetch(`/api/mining?scopeKey=${encodeURIComponent(state.scopeKey)}&actorId=${encodeURIComponent(state.currentUser.id)}&actorName=${encodeURIComponent(state.currentUser.displayName)}&ts=${Date.now()}`, {
+    const response = await fetch(`/api/mining?scopeKey=${encodeURIComponent(getMiningScopeKey())}&actorId=${encodeURIComponent(state.currentUser.id)}&actorName=${encodeURIComponent(state.currentUser.displayName)}&ts=${Date.now()}`, {
       cache: "no-store"
     });
     if (!response.ok) return;
@@ -2591,7 +2595,7 @@ async function performMiningAction(action, meta = {}, options = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        scopeKey: state.scopeKey,
+        scopeKey: getMiningScopeKey(),
         action,
         actor: {
           id: state.currentUser.id,
