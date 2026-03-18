@@ -136,6 +136,7 @@ const state = {
   miningStateLoading: true,
   miningSessionSyncHandle: null,
   miningUiTickerHandle: null,
+  miningQueuedRetryHandle: 0,
   miningUiLastRenderAtMs: 0,
   miningCanvasRaf: 0,
   miningCanvasLastFrameAtMs: 0,
@@ -3510,9 +3511,23 @@ function getMiningStepDirectionTowardTarget(session, player, targetX, targetY) {
 }
 
 function clearMiningQueuedActions() {
+  if (state.miningQueuedRetryHandle) {
+    window.clearTimeout(state.miningQueuedRetryHandle);
+    state.miningQueuedRetryHandle = 0;
+  }
   state.miningQueuedDirections = [];
   state.miningQueuedInteraction = null;
   state.miningTargetTile = null;
+}
+
+function scheduleMiningQueuedAction(delayMs = 0) {
+  if (state.miningQueuedRetryHandle) {
+    window.clearTimeout(state.miningQueuedRetryHandle);
+  }
+  state.miningQueuedRetryHandle = window.setTimeout(() => {
+    state.miningQueuedRetryHandle = 0;
+    void advanceMiningQueuedAction();
+  }, Math.max(0, Math.round(Number(delayMs || 0))));
 }
 
 async function dispatchMiningCanvasIntent(intent) {
@@ -3557,9 +3572,19 @@ async function advanceMiningQueuedAction() {
     const errorCode = payload?.errorCode || "";
     if (!errorCode) {
       state.miningQueuedDirections.shift();
+      const nextSession = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+      const nextPlayer = nextSession ? getMiningCurrentPlayer(nextSession, state.currentUser.id) : null;
+      if (state.miningQueuedDirections.length || state.miningQueuedInteraction || state.miningTargetTile) {
+        const retryDelay = Math.max(0, Number(nextPlayer?.nextActionAtMs || 0) - getMiningNow()) + 8;
+        scheduleMiningQueuedAction(retryDelay);
+      }
       return;
     }
-    if (errorCode === "cooldown") return;
+    if (errorCode === "cooldown") {
+      const retryDelay = Math.max(0, Number(player.nextActionAtMs || 0) - getMiningNow()) + 8;
+      scheduleMiningQueuedAction(retryDelay || MINING_ACTION_TICK_MS);
+      return;
+    }
     clearMiningQueuedActions();
     return;
   }
@@ -3583,9 +3608,17 @@ async function advanceMiningQueuedAction() {
       return;
     }
     syncMiningQueuedPlan(nextSession, nextPlayer, state.miningTargetTile);
+    if (state.miningQueuedDirections.length || state.miningQueuedInteraction || state.miningTargetTile) {
+      const retryDelay = Math.max(0, Number(nextPlayer.nextActionAtMs || 0) - getMiningNow()) + 8;
+      scheduleMiningQueuedAction(retryDelay);
+    }
     return;
   }
-  if (errorCode === "cooldown") return;
+  if (errorCode === "cooldown") {
+    const retryDelay = Math.max(0, Number(player.nextActionAtMs || 0) - getMiningNow()) + 8;
+    scheduleMiningQueuedAction(retryDelay || MINING_ACTION_TICK_MS);
+    return;
+  }
   clearMiningQueuedActions();
 }
 
