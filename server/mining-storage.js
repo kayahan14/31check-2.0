@@ -27,6 +27,23 @@ function isMissingSupabaseRelationError(error) {
   );
 }
 
+function isSupabaseUnavailableError(error) {
+  const status = Number(error?.status || error?.statusCode || 0);
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    status >= 500
+    || message.includes("web server is down")
+    || message.includes("error code 521")
+    || message.includes("cloudflare")
+    || message.includes("<!doctype html>")
+    || message.includes("<html")
+    || message.includes("fetch failed")
+    || message.includes("network")
+    || message.includes("timed out")
+    || message.includes("connection")
+  );
+}
+
 function hasBlobConfig() {
   return process.env.MINING_USE_BLOB === "1" && Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
@@ -167,7 +184,10 @@ async function getSupabaseRecord(scopeKey, id) {
     .eq("id", id)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    if (isSupabaseUnavailableError(error)) return null;
+    throw error;
+  }
   if (!data) return null;
   return {
     id: data.id,
@@ -194,7 +214,7 @@ async function getMiningTableSessionRecord(scopeKey) {
     .maybeSingle();
 
   if (error) {
-    if (isMissingSupabaseRelationError(error)) return null;
+    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
     throw error;
   }
   return normalizeStoredRecord(data?.record || null);
@@ -212,7 +232,7 @@ async function upsertMiningTableSessionRecord(scopeKey, record) {
     }, { onConflict: "scope_key" });
 
   if (error) {
-    if (isMissingSupabaseRelationError(error)) return null;
+    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
     throw error;
   }
   return normalized;
@@ -229,7 +249,7 @@ async function getMiningTableProfileRecord(scopeKey, userId) {
     .maybeSingle();
 
   if (error) {
-    if (isMissingSupabaseRelationError(error)) return null;
+    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
     throw error;
   }
   return normalizeStoredRecord(data?.record || null);
@@ -248,7 +268,7 @@ async function upsertMiningTableProfileRecord(scopeKey, userId, record) {
     }, { onConflict: "scope_key,user_id" });
 
   if (error) {
-    if (isMissingSupabaseRelationError(error)) return null;
+    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
     throw error;
   }
   return normalized;
@@ -279,7 +299,10 @@ async function upsertSupabaseRecord(scopeKey, record) {
     .from("messages")
     .upsert(payload, { onConflict: "id" });
 
-  if (error) throw error;
+  if (error) {
+    if (isSupabaseUnavailableError(error)) return normalizeStoredRecord(record);
+    throw error;
+  }
   return normalized;
 }
 
