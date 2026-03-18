@@ -1,94 +1,13 @@
-import { head, put } from "@vercel/blob";
-import { createClient } from "@supabase/supabase-js";
+import { hasDatabaseConfig, runQuery } from "./db.js";
 
-const SESSION_PATH = "session.json";
 const MINING_CHANNEL_ID = "casino:mining";
 const SESSION_TYPE = "mining_session";
 const PROFILE_TYPE = "mining_profile";
-const MINING_SESSION_TABLE = "mining_sessions";
-const MINING_PROFILE_TABLE = "mining_profiles";
 
-globalThis.__miningBlobFallbackStore ||= { sessions: {}, profiles: {} };
-let supabaseClient;
+globalThis.__miningRecordFallbackStore ||= { sessions: {}, profiles: {} };
 
-function isMissingSupabaseRelationError(error) {
-  const code = String(error?.code || "");
-  const status = Number(error?.status || error?.statusCode || 0);
-  const message = String(error?.message || "").toLowerCase();
-  return (
-    code === "42P01"
-    || code === "PGRST205"
-    || code === "PGRST204"
-    || status === 404
-    || message.includes("does not exist")
-    || message.includes("not found")
-    || message.includes("could not find the table")
-    || message.includes("relation")
-  );
-}
-
-function isSupabaseUnavailableError(error) {
-  const status = Number(error?.status || error?.statusCode || 0);
-  const message = String(error?.message || "").toLowerCase();
-  return (
-    status >= 500
-    || message.includes("web server is down")
-    || message.includes("error code 521")
-    || message.includes("cloudflare")
-    || message.includes("<!doctype html>")
-    || message.includes("<html")
-    || message.includes("fetch failed")
-    || message.includes("network")
-    || message.includes("timed out")
-    || message.includes("connection")
-  );
-}
-
-function hasBlobConfig() {
-  return process.env.MINING_USE_BLOB === "1" && Boolean(process.env.BLOB_READ_WRITE_TOKEN);
-}
-
-function hasSupabaseConfig() {
-  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
-
-function getSupabaseClient() {
-  if (supabaseClient) return supabaseClient;
-  supabaseClient = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false
-      }
-    }
-  );
-  return supabaseClient;
-}
-
-function miningScopeFolder(scopeKey) {
-  return `mining-store/${sanitizeSegment(scopeKey)}`;
-}
-
-function sessionPath(scopeKey) {
-  return `${miningScopeFolder(scopeKey)}/${SESSION_PATH}`;
-}
-
-function profilePath(scopeKey, userId) {
-  return `${miningScopeFolder(scopeKey)}/profiles/${sanitizeSegment(userId)}.json`;
-}
-
-function sessionRecordId(scopeKey) {
-  return `mining-session:${scopeKey}`;
-}
-
-function profileRecordId(scopeKey, userId) {
-  return `mining-profile:${scopeKey}:${userId}`;
-}
-
-function sanitizeSegment(value) {
-  return String(value || "unknown").replace(/[^a-zA-Z0-9:_-]/g, "_");
+function isMissingRelationError(error) {
+  return String(error?.code || "") === "42P01";
 }
 
 function normalizeStoredRecord(record) {
@@ -103,215 +22,205 @@ function normalizeStoredRecord(record) {
   };
 }
 
-async function fetchBlobJson(pathname) {
-  if (!hasBlobConfig()) {
-    return globalThis.__miningBlobFallbackStore.sessions[pathname]
-      || globalThis.__miningBlobFallbackStore.profiles[pathname]
-      || null;
-  }
-  try {
-    const meta = await head(pathname);
-    const response = await fetch(meta.url, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`Blob fetch failed: ${response.status}`);
-    }
-    const payload = await response.json();
-    return {
-      pathname: meta.pathname,
-      uploadedAt: meta.uploadedAt,
-      payload
-    };
-  } catch (error) {
-    const normalized = String(error?.message || "").toLowerCase();
-    if (normalized.includes("not found") || normalized.includes("does not exist") || normalized.includes("suspended")) {
-      return null;
-    }
-    throw error;
-  }
+function sessionRecordId(scopeKey) {
+  return `mining-session:${scopeKey}`;
 }
 
-async function writeBlobJson(pathname, payload) {
-  if (!hasBlobConfig()) {
-    const record = {
-      pathname,
-      uploadedAt: new Date(),
-      payload
-    };
-    if (pathname.endsWith(SESSION_PATH)) {
-      globalThis.__miningBlobFallbackStore.sessions[pathname] = record;
-    } else {
-      globalThis.__miningBlobFallbackStore.profiles[pathname] = record;
-    }
-    return true;
-  }
-
-  try {
-    await put(pathname, JSON.stringify(payload), {
-      access: "public",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: "application/json"
-    });
-    return true;
-  } catch (error) {
-    const normalized = String(error?.message || "").toLowerCase();
-    if (normalized.includes("suspended")) {
-      return false;
-    }
-    throw error;
-  }
+function profileRecordId(scopeKey, userId) {
+  return `mining-profile:${scopeKey}:${userId}`;
 }
 
-async function getSupabaseRecord(scopeKey, id) {
-  if (!hasSupabaseConfig()) return null;
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from("messages")
-    .select([
-      "id",
-      "scope_key",
-      "channel_id",
-      "author_name",
-      "avatar_label",
-      "avatar_url",
-      "content",
-      "message_type",
-      "created_at",
-      "created_at_ms",
-      "server_created_at",
-      "server_created_at_ms"
-    ].join(","))
-    .eq("id", id)
-    .maybeSingle();
+function fallbackSession(scopeKey) {
+  return globalThis.__miningRecordFallbackStore.sessions[String(scopeKey || "")] || null;
+}
 
-  if (error) {
-    if (isSupabaseUnavailableError(error)) return null;
-    throw error;
-  }
-  if (!data) return null;
-  return {
-    id: data.id,
-    channelId: data.channel_id,
-    author: data.author_name,
-    avatar: data.avatar_label,
-    avatarUrl: data.avatar_url,
-    content: typeof data.content === "string" ? JSON.parse(data.content) : data.content,
-    type: data.message_type,
-    createdAt: data.created_at,
-    createdAtMs: data.created_at_ms,
-    serverCreatedAt: data.server_created_at,
-    serverCreatedAtMs: data.server_created_at_ms
-  };
+function fallbackProfile(scopeKey, userId) {
+  return globalThis.__miningRecordFallbackStore.profiles[`${scopeKey}:${userId}`] || null;
+}
+
+function saveFallbackSession(scopeKey, record) {
+  globalThis.__miningRecordFallbackStore.sessions[String(scopeKey || "")] = record;
+}
+
+function saveFallbackProfile(scopeKey, userId, record) {
+  globalThis.__miningRecordFallbackStore.profiles[`${scopeKey}:${userId}`] = record;
 }
 
 async function getMiningTableSessionRecord(scopeKey) {
-  if (!hasSupabaseConfig()) return null;
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from(MINING_SESSION_TABLE)
-    .select("scope_key,record")
-    .eq("scope_key", scopeKey)
-    .maybeSingle();
-
-  if (error) {
-    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
+  if (!hasDatabaseConfig()) return null;
+  try {
+    const { rows } = await runQuery(`
+      select record
+      from mining_sessions
+      where scope_key = $1
+      limit 1
+    `, [scopeKey]);
+    return normalizeStoredRecord(rows[0]?.record || null);
+  } catch (error) {
+    if (isMissingRelationError(error)) return null;
     throw error;
   }
-  return normalizeStoredRecord(data?.record || null);
 }
 
 async function upsertMiningTableSessionRecord(scopeKey, record) {
-  if (!hasSupabaseConfig()) return normalizeStoredRecord(record);
-  const client = getSupabaseClient();
-  const normalized = normalizeStoredRecord(record);
-  const { error } = await client
-    .from(MINING_SESSION_TABLE)
-    .upsert({
-      scope_key: scopeKey,
-      record: normalized
-    }, { onConflict: "scope_key" });
-
-  if (error) {
-    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
+  if (!hasDatabaseConfig()) return normalizeStoredRecord(record);
+  try {
+    const normalized = normalizeStoredRecord(record);
+    const { rows } = await runQuery(`
+      insert into mining_sessions (scope_key, record, updated_at)
+      values ($1, $2::jsonb, timezone('utc', now()))
+      on conflict (scope_key) do update
+      set record = excluded.record,
+          updated_at = timezone('utc', now())
+      returning record
+    `, [scopeKey, JSON.stringify(normalized)]);
+    return normalizeStoredRecord(rows[0]?.record || normalized);
+  } catch (error) {
+    if (isMissingRelationError(error)) return null;
     throw error;
   }
-  return normalized;
 }
 
 async function getMiningTableProfileRecord(scopeKey, userId) {
-  if (!hasSupabaseConfig()) return null;
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from(MINING_PROFILE_TABLE)
-    .select("scope_key,user_id,record")
-    .eq("scope_key", scopeKey)
-    .eq("user_id", String(userId || ""))
-    .maybeSingle();
-
-  if (error) {
-    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
+  if (!hasDatabaseConfig()) return null;
+  try {
+    const { rows } = await runQuery(`
+      select record
+      from mining_profiles
+      where scope_key = $1 and user_id = $2
+      limit 1
+    `, [scopeKey, String(userId || "")]);
+    return normalizeStoredRecord(rows[0]?.record || null);
+  } catch (error) {
+    if (isMissingRelationError(error)) return null;
     throw error;
   }
-  return normalizeStoredRecord(data?.record || null);
 }
 
 async function upsertMiningTableProfileRecord(scopeKey, userId, record) {
-  if (!hasSupabaseConfig()) return normalizeStoredRecord(record);
-  const client = getSupabaseClient();
-  const normalized = normalizeStoredRecord(record);
-  const { error } = await client
-    .from(MINING_PROFILE_TABLE)
-    .upsert({
-      scope_key: scopeKey,
-      user_id: String(userId || ""),
-      record: normalized
-    }, { onConflict: "scope_key,user_id" });
-
-  if (error) {
-    if (isMissingSupabaseRelationError(error) || isSupabaseUnavailableError(error)) return null;
+  if (!hasDatabaseConfig()) return normalizeStoredRecord(record);
+  try {
+    const normalized = normalizeStoredRecord(record);
+    const { rows } = await runQuery(`
+      insert into mining_profiles (scope_key, user_id, record, updated_at)
+      values ($1, $2, $3::jsonb, timezone('utc', now()))
+      on conflict (scope_key, user_id) do update
+      set record = excluded.record,
+          updated_at = timezone('utc', now())
+      returning record
+    `, [scopeKey, String(userId || ""), JSON.stringify(normalized)]);
+    return normalizeStoredRecord(rows[0]?.record || normalized);
+  } catch (error) {
+    if (isMissingRelationError(error)) return null;
     throw error;
   }
+}
+
+async function getMessageRecord(id) {
+  if (!hasDatabaseConfig()) return null;
+  const { rows } = await runQuery(`
+    select id,
+           scope_key,
+           channel_id,
+           author_name,
+           avatar_label,
+           avatar_url,
+           content,
+           message_type,
+           created_at,
+           created_at_ms,
+           server_created_at,
+           server_created_at_ms
+    from messages
+    where id = $1
+    limit 1
+  `, [id]);
+
+  const row = rows[0];
+  if (!row) return null;
+  return normalizeStoredRecord({
+    id: row.id,
+    channelId: row.channel_id,
+    author: row.author_name,
+    avatar: row.avatar_label,
+    avatarUrl: row.avatar_url,
+    content: typeof row.content === "string" ? safeJsonParse(row.content) : row.content,
+    type: row.message_type,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    createdAtMs: row.created_at_ms,
+    serverCreatedAt: row.server_created_at instanceof Date ? row.server_created_at.toISOString() : row.server_created_at,
+    serverCreatedAtMs: row.server_created_at_ms
+  });
+}
+
+async function upsertMessageRecord(scopeKey, record) {
+  if (!hasDatabaseConfig()) return normalizeStoredRecord(record);
+  const normalized = normalizeStoredRecord(record);
+  await runQuery(`
+    insert into messages (
+      id,
+      scope_key,
+      channel_id,
+      author_name,
+      avatar_label,
+      avatar_url,
+      content,
+      message_type,
+      created_at,
+      created_at_ms,
+      server_created_at,
+      server_created_at_ms
+    ) values (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    )
+    on conflict (id) do update set
+      scope_key = excluded.scope_key,
+      channel_id = excluded.channel_id,
+      author_name = excluded.author_name,
+      avatar_label = excluded.avatar_label,
+      avatar_url = excluded.avatar_url,
+      content = excluded.content,
+      message_type = excluded.message_type,
+      created_at = excluded.created_at,
+      created_at_ms = excluded.created_at_ms,
+      server_created_at = excluded.server_created_at,
+      server_created_at_ms = excluded.server_created_at_ms
+  `, [
+    normalized.id,
+    scopeKey,
+    normalized.channelId,
+    normalized.author,
+    normalized.avatar,
+    normalized.avatarUrl || "",
+    JSON.stringify(normalized.content),
+    normalized.type,
+    normalized.createdAt,
+    normalized.createdAtMs,
+    normalized.serverCreatedAt,
+    normalized.serverCreatedAtMs
+  ]);
   return normalized;
 }
 
-async function upsertSupabaseRecord(scopeKey, record) {
-  if (!hasSupabaseConfig()) {
-    return normalizeStoredRecord(record);
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
   }
-  const client = getSupabaseClient();
-  const normalized = normalizeStoredRecord(record);
-  const payload = {
-    id: normalized.id,
-    scope_key: scopeKey,
-    channel_id: normalized.channelId,
-    author_name: normalized.author,
-    avatar_label: normalized.avatar,
-    avatar_url: normalized.avatarUrl || "",
-    content: JSON.stringify(normalized.content),
-    message_type: normalized.type,
-    created_at: normalized.createdAt,
-    created_at_ms: normalized.createdAtMs,
-    server_created_at: normalized.serverCreatedAt,
-    server_created_at_ms: normalized.serverCreatedAtMs
-  };
-
-  const { error } = await client
-    .from("messages")
-    .upsert(payload, { onConflict: "id" });
-
-  if (error) {
-    if (isSupabaseUnavailableError(error)) return normalizeStoredRecord(record);
-    throw error;
-  }
-  return normalized;
 }
 
 export async function getMiningSessionRecord(scopeKey) {
-  const tableRecord = await getMiningTableSessionRecord(scopeKey);
-  if (tableRecord) return tableRecord;
-  const blobRecord = await fetchBlobJson(sessionPath(scopeKey));
-  if (blobRecord?.payload) return normalizeStoredRecord(blobRecord.payload);
-  return getSupabaseRecord(scopeKey, sessionRecordId(scopeKey));
+  try {
+    const tableRecord = await getMiningTableSessionRecord(scopeKey);
+    if (tableRecord) return tableRecord;
+    const fallback = fallbackSession(scopeKey);
+    if (fallback) return fallback;
+    return await getMessageRecord(sessionRecordId(scopeKey));
+  } catch (error) {
+    console.warn("Mining session read failed, falling back to memory.", error);
+    return fallbackSession(scopeKey);
+  }
 }
 
 export async function saveMiningSessionRecord(scopeKey, sessionRecord) {
@@ -321,19 +230,34 @@ export async function saveMiningSessionRecord(scopeKey, sessionRecord) {
     channelId: MINING_CHANNEL_ID,
     type: SESSION_TYPE
   });
-  const tableRecord = await upsertMiningTableSessionRecord(scopeKey, normalized);
-  if (tableRecord) return tableRecord;
-  const wroteBlob = await writeBlobJson(sessionPath(scopeKey), normalized);
-  if (wroteBlob) return normalized;
-  return upsertSupabaseRecord(scopeKey, normalized);
+
+  try {
+    const tableRecord = await upsertMiningTableSessionRecord(scopeKey, normalized);
+    if (tableRecord) {
+      saveFallbackSession(scopeKey, tableRecord);
+      return tableRecord;
+    }
+    const stored = await upsertMessageRecord(scopeKey, normalized);
+    saveFallbackSession(scopeKey, stored);
+    return stored;
+  } catch (error) {
+    console.warn("Mining session write failed, falling back to memory.", error);
+    saveFallbackSession(scopeKey, normalized);
+    return normalized;
+  }
 }
 
 export async function getMiningProfileRecord(scopeKey, userId) {
-  const tableRecord = await getMiningTableProfileRecord(scopeKey, userId);
-  if (tableRecord) return tableRecord;
-  const blobRecord = await fetchBlobJson(profilePath(scopeKey, userId));
-  if (blobRecord?.payload) return normalizeStoredRecord(blobRecord.payload);
-  return getSupabaseRecord(scopeKey, profileRecordId(scopeKey, userId));
+  try {
+    const tableRecord = await getMiningTableProfileRecord(scopeKey, userId);
+    if (tableRecord) return tableRecord;
+    const fallback = fallbackProfile(scopeKey, userId);
+    if (fallback) return fallback;
+    return await getMessageRecord(profileRecordId(scopeKey, userId));
+  } catch (error) {
+    console.warn("Mining profile read failed, falling back to memory.", error);
+    return fallbackProfile(scopeKey, userId);
+  }
 }
 
 export async function saveMiningProfileRecord(scopeKey, userId, profileRecord) {
@@ -343,9 +267,19 @@ export async function saveMiningProfileRecord(scopeKey, userId, profileRecord) {
     channelId: MINING_CHANNEL_ID,
     type: PROFILE_TYPE
   });
-  const tableRecord = await upsertMiningTableProfileRecord(scopeKey, userId, normalized);
-  if (tableRecord) return tableRecord;
-  const wroteBlob = await writeBlobJson(profilePath(scopeKey, userId), normalized);
-  if (wroteBlob) return normalized;
-  return upsertSupabaseRecord(scopeKey, normalized);
+
+  try {
+    const tableRecord = await upsertMiningTableProfileRecord(scopeKey, userId, normalized);
+    if (tableRecord) {
+      saveFallbackProfile(scopeKey, userId, tableRecord);
+      return tableRecord;
+    }
+    const stored = await upsertMessageRecord(scopeKey, normalized);
+    saveFallbackProfile(scopeKey, userId, stored);
+    return stored;
+  } catch (error) {
+    console.warn("Mining profile write failed, falling back to memory.", error);
+    saveFallbackProfile(scopeKey, userId, normalized);
+    return normalized;
+  }
 }

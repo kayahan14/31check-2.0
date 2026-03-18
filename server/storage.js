@@ -1,20 +1,19 @@
-import { createClient } from "@supabase/supabase-js";
+import { hasDatabaseConfig, runQuery } from "./db.js";
 
 const MESSAGE_LIMIT = 50;
 
 globalThis.__activityChatStore ||= { scopes: {} };
-let supabaseClient;
 
 export async function listScopeChannels(scopeKey, options = {}) {
   return listScopeChannelsFiltered(scopeKey, options);
 }
 
 export async function listScopeMessages(scopeKey, options = {}) {
-  if (hasSupabaseConfig()) {
+  if (hasDatabaseConfig()) {
     try {
-      return await listSupabaseMessages(scopeKey, options);
+      return await listDatabaseMessages(scopeKey, options);
     } catch (error) {
-      console.warn("Supabase read failed, falling back to ephemeral store.", error);
+      console.warn("Database read failed, falling back to ephemeral store.", error);
       return listEphemeralMessages(scopeKey, options);
     }
   }
@@ -33,14 +32,17 @@ async function listScopeChannelsFiltered(scopeKey, options = {}) {
 }
 
 export async function appendMessage(scopeKey, channelId, message) {
-  const normalizedMessage = normalizeMessage(message);
+  const normalizedMessage = normalizeMessage({
+    ...message,
+    channelId: channelId || message?.channelId || ""
+  });
 
-  if (hasSupabaseConfig()) {
+  if (hasDatabaseConfig()) {
     try {
-      await appendSupabaseMessage(scopeKey, channelId, normalizedMessage);
+      await appendDatabaseMessage(scopeKey, channelId, normalizedMessage);
       return normalizedMessage;
     } catch (error) {
-      console.warn("Supabase write failed, falling back to ephemeral store.", error);
+      console.warn("Database write failed, falling back to ephemeral store.", error);
       appendEphemeralMessage(scopeKey, channelId, normalizedMessage);
       return normalizedMessage;
     }
@@ -53,53 +55,54 @@ export async function appendMessage(scopeKey, channelId, message) {
 export async function updateMessage(scopeKey, messageId, nextMessage) {
   const normalizedMessage = normalizeMessage(nextMessage);
 
-  if (hasSupabaseConfig()) {
+  if (hasDatabaseConfig()) {
     try {
-      const client = getSupabaseClient();
-      const updatePayload = {
-        author_name: normalizedMessage.author,
-        avatar_label: normalizedMessage.avatar,
-        avatar_url: normalizedMessage.avatarUrl,
-        content: serializeContent(normalizedMessage.content),
-        message_type: normalizedMessage.type,
-        created_at: normalizedMessage.createdAt,
-        created_at_ms: normalizedMessage.createdAtMs,
-        server_created_at: normalizedMessage.serverCreatedAt,
-        server_created_at_ms: normalizedMessage.serverCreatedAtMs
-      };
+      const { rows } = await runQuery(`
+        update messages
+        set author_name = $3,
+            avatar_label = $4,
+            avatar_url = $5,
+            content = $6,
+            message_type = $7,
+            created_at = $8,
+            created_at_ms = $9,
+            server_created_at = $10,
+            server_created_at_ms = $11
+        where scope_key = $1 and id = $2
+        returning id,
+                  scope_key,
+                  channel_id,
+                  author_name,
+                  avatar_label,
+                  avatar_url,
+                  content,
+                  message_type,
+                  created_at,
+                  created_at_ms,
+                  server_created_at,
+                  server_created_at_ms
+      `, [
+        scopeKey,
+        messageId,
+        normalizedMessage.author,
+        normalizedMessage.avatar,
+        normalizedMessage.avatarUrl,
+        serializeContent(normalizedMessage.content),
+        normalizedMessage.type,
+        normalizedMessage.createdAt,
+        normalizedMessage.createdAtMs,
+        normalizedMessage.serverCreatedAt,
+        normalizedMessage.serverCreatedAtMs
+      ]);
 
-      const { data, error } = await client
-        .from("messages")
-        .update(updatePayload)
-        .eq("scope_key", scopeKey)
-        .eq("id", messageId)
-        .select([
-          "id",
-          "scope_key",
-          "channel_id",
-          "author_name",
-          "avatar_label",
-          "avatar_url",
-          "content",
-          "message_type",
-          "created_at",
-          "created_at_ms",
-          "server_created_at",
-          "server_created_at_ms"
-        ].join(","))
-        .maybeSingle();
-
-      if (error) {
-        throw error;
+      if (rows[0]) {
+        return mapRowToMessage(rows[0]);
       }
-      if (!data) {
-        await appendSupabaseMessage(scopeKey, normalizedMessage.channelId, normalizedMessage);
-        return normalizedMessage;
-      }
 
-      return mapRowToMessage(data);
+      await appendDatabaseMessage(scopeKey, normalizedMessage.channelId, normalizedMessage);
+      return normalizedMessage;
     } catch (error) {
-      console.warn("Supabase update failed, falling back to ephemeral store.", error);
+      console.warn("Database update failed, falling back to ephemeral store.", error);
       return updateEphemeralMessage(scopeKey, messageId, normalizedMessage);
     }
   }
@@ -107,126 +110,109 @@ export async function updateMessage(scopeKey, messageId, nextMessage) {
   return updateEphemeralMessage(scopeKey, messageId, normalizedMessage);
 }
 
-async function listSupabaseMessages(scopeKey, options = {}) {
+async function listDatabaseMessages(scopeKey, options = {}) {
   const {
     channelId = "",
     messageTypes = [],
     excludeTypes = [],
     limit = MESSAGE_LIMIT
   } = options;
-  const client = getSupabaseClient();
-  let query = client
-    .from("messages")
-    .select([
-      "id",
-      "scope_key",
-      "channel_id",
-      "author_name",
-      "avatar_label",
-      "avatar_url",
-      "content",
-      "message_type",
-      "created_at",
-      "created_at_ms",
-      "server_created_at",
-      "server_created_at_ms"
-    ].join(","))
-    .eq("scope_key", scopeKey)
-    .order("server_created_at_ms", { ascending: false })
-    .limit(Math.max(1, Number(limit) || MESSAGE_LIMIT));
+  const params = [scopeKey];
+  const clauses = ["scope_key = $1"];
 
   if (channelId) {
-    query = query.eq("channel_id", channelId);
+    params.push(channelId);
+    clauses.push(`channel_id = $${params.length}`);
   }
+
   if (Array.isArray(messageTypes) && messageTypes.length) {
-    query = query.in("message_type", messageTypes);
+    params.push(messageTypes);
+    clauses.push(`message_type = any($${params.length}::text[])`);
   }
+
   if (Array.isArray(excludeTypes) && excludeTypes.length) {
-    query = query.not("message_type", "in", `(${excludeTypes.join(",")})`);
+    params.push(excludeTypes);
+    clauses.push(`not (message_type = any($${params.length}::text[]))`);
   }
 
-  const { data, error } = await query;
+  params.push(Math.max(1, Number(limit) || MESSAGE_LIMIT));
+  const { rows } = await runQuery(`
+    select id,
+           scope_key,
+           channel_id,
+           author_name,
+           avatar_label,
+           avatar_url,
+           content,
+           message_type,
+           created_at,
+           created_at_ms,
+           server_created_at,
+           server_created_at_ms
+    from messages
+    where ${clauses.join(" and ")}
+    order by server_created_at_ms desc, id desc
+    limit $${params.length}
+  `, params);
 
-  if (error) {
-    throw error;
-  }
-
-  return [...(data || [])].reverse().map((row) => mapRowToMessage(row));
+  return [...rows].reverse().map((row) => mapRowToMessage(row));
 }
 
-async function appendSupabaseMessage(scopeKey, channelId, message) {
-  const client = getSupabaseClient();
-  const insertPayload = {
-    id: message.id,
-    scope_key: scopeKey,
-    channel_id: channelId,
-    author_name: message.author,
-    avatar_label: message.avatar,
-    avatar_url: message.avatarUrl,
-    content: serializeContent(message.content),
-    message_type: message.type,
-    created_at: message.createdAt,
-    created_at_ms: message.createdAtMs,
-    server_created_at: message.serverCreatedAt,
-    server_created_at_ms: message.serverCreatedAtMs
-  };
+async function appendDatabaseMessage(scopeKey, channelId, message) {
+  await runQuery(`
+    insert into messages (
+      id,
+      scope_key,
+      channel_id,
+      author_name,
+      avatar_label,
+      avatar_url,
+      content,
+      message_type,
+      created_at,
+      created_at_ms,
+      server_created_at,
+      server_created_at_ms
+    ) values (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    )
+    on conflict (id) do update set
+      scope_key = excluded.scope_key,
+      channel_id = excluded.channel_id,
+      author_name = excluded.author_name,
+      avatar_label = excluded.avatar_label,
+      avatar_url = excluded.avatar_url,
+      content = excluded.content,
+      message_type = excluded.message_type,
+      created_at = excluded.created_at,
+      created_at_ms = excluded.created_at_ms,
+      server_created_at = excluded.server_created_at,
+      server_created_at_ms = excluded.server_created_at_ms
+  `, [
+    message.id,
+    scopeKey,
+    channelId,
+    message.author,
+    message.avatar,
+    message.avatarUrl,
+    serializeContent(message.content),
+    message.type,
+    message.createdAt,
+    message.createdAtMs,
+    message.serverCreatedAt,
+    message.serverCreatedAtMs
+  ]);
 
-  const { error } = await client
-    .from("messages")
-    .insert(insertPayload);
-
-  if (error) {
-    throw error;
-  }
-
-  const { data: overflowRows, error: overflowError } = await client
-    .from("messages")
-    .select("id")
-    .eq("scope_key", scopeKey)
-    .eq("channel_id", channelId)
-    .order("server_created_at_ms", { ascending: false })
-    .range(MESSAGE_LIMIT, MESSAGE_LIMIT + 999);
-
-  if (overflowError) {
-    throw overflowError;
-  }
-
-  const idsToDelete = (overflowRows || []).map((row) => row.id).filter(Boolean);
-  if (!idsToDelete.length) {
-    return;
-  }
-
-  const { error: deleteError } = await client
-    .from("messages")
-    .delete()
-    .in("id", idsToDelete);
-
-  if (deleteError) {
-    throw deleteError;
-  }
-}
-
-function getSupabaseClient() {
-  if (supabaseClient) {
-    return supabaseClient;
-  }
-
-  supabaseClient = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false
-      }
-    }
-  );
-
-  return supabaseClient;
-}
-
-function hasSupabaseConfig() {
-  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  await runQuery(`
+    delete from messages
+    where id in (
+      select id
+      from messages
+      where scope_key = $1 and channel_id = $2
+      order by server_created_at_ms desc, id desc
+      offset $3
+    )
+  `, [scopeKey, channelId, MESSAGE_LIMIT]);
 }
 
 function appendEphemeralMessage(scopeKey, channelId, message) {
@@ -281,11 +267,18 @@ function mapRowToMessage(row) {
     avatarUrl: row.avatar_url,
     content: deserializeContent(row.content, row.message_type),
     type: row.message_type,
-    createdAt: row.created_at,
-    createdAtMs: row.created_at_ms,
-    serverCreatedAt: row.server_created_at,
-    serverCreatedAtMs: row.server_created_at_ms
+    createdAt: normalizeTimestamp(row.created_at, row.created_at_ms),
+    createdAtMs: Number(row.created_at_ms || 0),
+    serverCreatedAt: normalizeTimestamp(row.server_created_at, row.server_created_at_ms),
+    serverCreatedAtMs: Number(row.server_created_at_ms || 0)
   });
+}
+
+function normalizeTimestamp(value, fallbackMs = Date.now()) {
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  const numeric = Number(fallbackMs || Date.now());
+  return new Date(numeric).toISOString();
 }
 
 function normalizeChannels(channels) {
