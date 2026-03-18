@@ -88,6 +88,7 @@ const MINING_MIN_ZOOM = 1;
 const MINING_MAX_ZOOM = 1.8;
 const MINING_DEFAULT_ZOOM = 1.3;
 const MINING_BASE_VISIBLE_TILES = 15.5;
+const MINING_PATH_NODE_LIMIT = 900;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
