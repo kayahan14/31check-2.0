@@ -7,11 +7,53 @@ const CHAT_EXCLUDED_MESSAGE_TYPES = [
   "mining_profile"
 ];
 
+function getBackendProxyOrigin() {
+  return String(
+    process.env.BACKEND_PROXY_URL
+    || process.env.MINING_BACKEND_URL
+    || process.env.VITE_GAME_BACKEND_URL
+    || ""
+  ).trim().replace(/\/+$/, "");
+}
+
+async function proxyToBackend(req, res) {
+  const origin = getBackendProxyOrigin();
+  if (!origin) return false;
+
+  const targetUrl = new URL("/api/messages", `${origin}/`);
+  for (const [key, value] of Object.entries(req.query || {})) {
+    if (value === undefined || value === null) continue;
+    targetUrl.searchParams.set(key, String(value));
+  }
+
+  const response = await fetch(targetUrl, {
+    method: req.method,
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: req.method === "GET" ? undefined : JSON.stringify(req.body || {})
+  });
+
+  res.status(response.status);
+  const text = await response.text();
+  if (text) {
+    res.setHeader("Content-Type", response.headers.get("content-type") || "application/json; charset=utf-8");
+    res.send(text);
+    return true;
+  }
+  res.end();
+  return true;
+}
+
 export default async function handler(req, res) {
   try {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
+
+    if (await proxyToBackend(req, res)) {
+      return;
+    }
 
     if (req.method === "GET") {
       const scopeKey = String(req.query.scopeKey || "local-preview");

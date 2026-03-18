@@ -665,24 +665,26 @@ async function loadPersistedMessages({ initial = false } = {}) {
   const requestEpoch = state.remoteSyncEpoch;
 
   try {
-    const response = await fetch(buildBackendApiUrl("/api/messages", {
-      scopeKey: state.scopeKey,
-      ts: Date.now()
-    }), {
-      cache: "no-store"
-    });
-    if (!response.ok) return;
+      const response = await fetch(buildMessagesApiUrl({
+        scopeKey: state.scopeKey,
+        ts: Date.now()
+      }), {
+        cache: "no-store"
+      });
+      if (!response.ok) return;
 
-    const payload = await response.json();
-    if (requestEpoch !== state.remoteSyncEpoch) {
-      return;
-    }
-    syncRemoteMessages(payload.channels || {});
-  } finally {
-    if (state.isMessagesLoading) {
-      state.isMessagesLoading = false;
-      render();
-    }
+      const payload = await response.json();
+      if (requestEpoch !== state.remoteSyncEpoch) {
+        return;
+      }
+      syncRemoteMessages(payload.channels || {});
+    } catch (error) {
+      console.warn("Message sync failed.", error);
+    } finally {
+      if (state.isMessagesLoading) {
+        state.isMessagesLoading = false;
+        render();
+      }
   }
 }
 
@@ -1515,12 +1517,12 @@ async function persistMessage(message) {
   const channel = selectedChannel();
   if (!channel) return;
 
-  try {
-    const response = await fetch(buildBackendApiUrl("/api/messages"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scopeKey: state.scopeKey, channelId: channel.id, message })
-    });
+    try {
+      const response = await fetch(buildMessagesApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scopeKey: state.scopeKey, channelId: channel.id, message })
+      });
     if (!response.ok) {
       throw new Error("Message persistence request failed.");
     }
@@ -1532,13 +1534,13 @@ async function persistMessage(message) {
   }
 }
 
-async function persistMessageUpdate(message) {
-  try {
-    const response = await fetch(buildBackendApiUrl("/api/messages"), {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scopeKey: state.scopeKey,
+  async function persistMessageUpdate(message) {
+    try {
+      const response = await fetch(buildMessagesApiUrl(), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scopeKey: state.scopeKey,
         messageId: message.id,
         message
       })
@@ -2323,12 +2325,12 @@ async function handleDragonJoin(messageId) {
   }
 }
 
-async function performDragonAction(messageId, actionType) {
-  const response = await fetch(buildBackendApiUrl("/api/messages"), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      scopeKey: state.scopeKey,
+  async function performDragonAction(messageId, actionType) {
+  const response = await fetch(buildMessagesApiUrl(), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scopeKey: state.scopeKey,
       messageId,
       actionType,
       actor: {
@@ -2475,12 +2477,21 @@ function hasDirectRealtimeBackend() {
   return (hostname === "localhost" || hostname === "127.0.0.1") && port === "5173";
 }
 
-function buildGameApiUrl(path, query = {}) {
+  function buildGameApiUrl(path, query = {}) {
   return buildBackendApiUrl(path, query);
-}
+  }
 
-function buildBackendApiUrl(path, query = {}) {
-  const url = new URL(path, `${getGameBackendOrigin()}/`);
+  function buildMessagesApiUrl(query = {}) {
+    const url = new URL("/api/messages", window.location.origin);
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value === undefined || value === null || value === "") continue;
+      url.searchParams.set(key, String(value));
+    }
+    return url.toString();
+  }
+
+  function buildBackendApiUrl(path, query = {}) {
+    const url = new URL(path, `${getGameBackendOrigin()}/`);
   for (const [key, value] of Object.entries(query || {})) {
     if (value === undefined || value === null || value === "") continue;
     url.searchParams.set(key, String(value));
