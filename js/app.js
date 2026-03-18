@@ -397,10 +397,17 @@ function bindStaticEvents() {
 async function initializeRuntime() {
   if (MOCK_MODE) {
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
-    await loadPersistedMessages({ initial: true });
     state.membersLoading = false;
+    const messageTask = loadPersistedMessages({ initial: true });
     startMessageSync();
-    await initializeDedicatedCasinoViews();
+    if (isDedicatedCasinoScreen()) {
+      await initializeDedicatedCasinoViews();
+      render();
+      await messageTask;
+    } else {
+      await messageTask;
+      await initializeDedicatedCasinoViews();
+    }
     render();
     return;
   }
@@ -419,9 +426,16 @@ async function initializeRuntime() {
     await subscribeDiscordEvents(auth);
     await hydrateGuildMember(auth);
     await hydrateParticipants();
-    await loadPersistedMessages({ initial: true });
+    const messageTask = loadPersistedMessages({ initial: true });
     startMessageSync();
-    await initializeDedicatedCasinoViews();
+    if (isDedicatedCasinoScreen()) {
+      await initializeDedicatedCasinoViews();
+      render();
+      await messageTask;
+    } else {
+      await messageTask;
+      await initializeDedicatedCasinoViews();
+    }
     render();
     renderUserModal();
   } catch (error) {
@@ -432,9 +446,16 @@ async function initializeRuntime() {
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
     state.members = [...DEFAULT_MEMBERS];
     state.membersLoading = false;
-    await loadPersistedMessages({ initial: true });
+    const messageTask = loadPersistedMessages({ initial: true });
     startMessageSync();
-    await initializeDedicatedCasinoViews();
+    if (isDedicatedCasinoScreen()) {
+      await initializeDedicatedCasinoViews();
+      render();
+      await messageTask;
+    } else {
+      await messageTask;
+      await initializeDedicatedCasinoViews();
+    }
     render();
   }
 }
@@ -460,6 +481,10 @@ async function initializeDedicatedCasinoViews() {
 
   void dragonTask;
   void miningTask;
+}
+
+function isDedicatedCasinoScreen() {
+  return isCasinoDragonView() || isCasinoMiningView();
 }
 
 async function authenticateWithDiscord() {
