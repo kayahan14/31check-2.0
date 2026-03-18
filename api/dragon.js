@@ -1,4 +1,5 @@
 import { DEFAULT_DRAGON_CONFIG, normalizeDragonConfig } from "../shared/dragon-config.js";
+import { applyCors } from "../server/origin.js";
 import { broadcastRealtime } from "../server/realtime.js";
 import { appendMessage, listScopeMessages, updateMessage } from "../server/storage.js";
 
@@ -28,6 +29,10 @@ const REMOTE_DRAGON_BACKEND_URL = process.env.VERCEL === "1"
 
 export default async function handler(req, res) {
   try {
+    if (applyCors(req, res)) {
+      return;
+    }
+
     if (REMOTE_DRAGON_BACKEND_URL) {
       await proxyDragonRequest(req, res);
       return;

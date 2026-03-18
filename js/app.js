@@ -18,6 +18,7 @@ import {
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const GAME_BACKEND_URL = normalizeBackendOrigin(import.meta.env.VITE_GAME_BACKEND_URL || "");
+const FRONTEND_API_ORIGIN = normalizeBackendOrigin(import.meta.env.VITE_FRONTEND_API_ORIGIN || "");
 const PAGE_QUERY = new URLSearchParams(window.location.search);
 const MOCK_MODE = PAGE_QUERY.get("mock") === "1" || !DISCORD_CLIENT_ID;
 const MOCK_SCOPE_KEY = PAGE_QUERY.get("mockScope") || "local-preview";
@@ -534,7 +535,7 @@ async function authenticateWithDiscord() {
     scope: ["identify", "guilds", "guilds.members.read"]
   });
 
-  const response = await fetch("/api/token", {
+  const response = await fetch(buildFrontendApiUrl("/api/token"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code })
@@ -2471,6 +2472,21 @@ function getGameBackendOrigin() {
   return origin.replace(/\/+$/, "");
 }
 
+function getFrontendApiOrigin() {
+  if (FRONTEND_API_ORIGIN) {
+    return FRONTEND_API_ORIGIN;
+  }
+
+  const { hostname, port, origin } = window.location;
+  if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "5173") {
+    return origin.replace(/\/+$/, "");
+  }
+  if (/\.vercel\.app$/i.test(hostname)) {
+    return origin.replace(/\/+$/, "");
+  }
+  return "https://31check-2-0.vercel.app";
+}
+
 function hasDirectRealtimeBackend() {
   if (GAME_BACKEND_URL) return true;
   const { hostname, port } = window.location;
@@ -2478,19 +2494,15 @@ function hasDirectRealtimeBackend() {
 }
 
   function buildGameApiUrl(path, query = {}) {
-    if (isLocalFrontendDevelopment()) {
-      return buildBackendApiUrl(path, query);
-    }
-    const url = new URL(path, window.location.origin);
-    for (const [key, value] of Object.entries(query || {})) {
-      if (value === undefined || value === null || value === "") continue;
-      url.searchParams.set(key, String(value));
-    }
-    return url.toString();
+  return buildFrontendApiUrl(path, query);
   }
 
   function buildMessagesApiUrl(query = {}) {
-    const url = new URL("/api/messages", window.location.origin);
+    return buildFrontendApiUrl("/api/messages", query);
+  }
+
+  function buildFrontendApiUrl(path, query = {}) {
+    const url = new URL(path, `${getFrontendApiOrigin()}/`);
     for (const [key, value] of Object.entries(query || {})) {
       if (value === undefined || value === null || value === "") continue;
       url.searchParams.set(key, String(value));

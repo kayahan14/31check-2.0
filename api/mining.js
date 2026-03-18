@@ -22,6 +22,7 @@ import {
   saveMiningProfileRecord,
   saveMiningSessionRecord
 } from "../server/mining-storage.js";
+import { applyCors } from "../server/origin.js";
 import { broadcastRealtime } from "../server/realtime.js";
 
 globalThis.__miningQueues ||= {};
@@ -47,6 +48,10 @@ function normalizeMiningScopeKey(scopeKey) {
 
 export default async function handler(req, res) {
   try {
+    if (applyCors(req, res)) {
+      return;
+    }
+
     if (REMOTE_MINING_BACKEND_URL) {
       await proxyMiningRequest(req, res);
       return;

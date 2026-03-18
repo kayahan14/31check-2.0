@@ -1,4 +1,5 @@
 import { appendMessage, listScopeChannels, updateMessage } from "../server/storage.js";
+import { applyCors } from "../server/origin.js";
 
 const CHAT_EXCLUDED_MESSAGE_TYPES = [
   "dragon_state",
@@ -47,6 +48,10 @@ async function proxyToBackend(req, res) {
 
 export default async function handler(req, res) {
   try {
+    if (applyCors(req, res)) {
+      return;
+    }
+
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
