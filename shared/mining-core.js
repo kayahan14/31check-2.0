@@ -12,6 +12,23 @@ export const MINING_TILE_SIZE = 34;
 export const MINING_DEFAULT_WALLET_COINS = 500;
 
 const FLOOR_TILE = { kind: "floor", oreId: "", hp: 0, maxHp: 0, reward: 0, requiredTier: 0, moleChance: 0 };
+const MINING_TRANSPORT_MAP_VERSION = 1;
+const MINING_TILE_TOKEN_SIZE = 3;
+const MINING_TRANSPORT_FLOOR_CODE = ".";
+const MINING_TRANSPORT_EXIT_CODE = "X";
+const MINING_TRANSPORT_ORE_CODES = {
+  stone: "1",
+  coal: "2",
+  copper: "3",
+  iron: "4",
+  amber: "5",
+  sapphire: "6",
+  ruby: "7",
+  starsteel: "8"
+};
+const MINING_TRANSPORT_ORE_BY_CODE = Object.fromEntries(
+  Object.entries(MINING_TRANSPORT_ORE_CODES).map(([oreId, code]) => [code, oreId])
+);
 
 const PICKAXE_CATALOG = {
   "starter-pick": { id: "starter-pick", label: "Demir Kazma", tier: 2, miningPower: 1 },
@@ -106,6 +123,7 @@ export function createMiningSession(actor, profile, now = Date.now()) {
 export function normalizeMiningSession(content, now = Date.now()) {
   const game = structuredClone(content || {});
   game.game = "mining";
+  game.isTransportSnapshot = Boolean(game.isTransportSnapshot);
   game.revision = Number(game.revision) > 0 ? Number(game.revision) : 1;
   game.status ||= "lobby";
   game.createdAtMs = Number(game.createdAtMs) > 0 ? Number(game.createdAtMs) : now;
@@ -125,16 +143,25 @@ export function normalizeMiningSession(content, now = Date.now()) {
   game.moles = Array.isArray(game.moles) ? game.moles.map((entry) => normalizeMiningMole(entry)).filter(Boolean) : [];
   game.players = Array.isArray(game.players) ? game.players.map((entry) => normalizeMiningPlayer(entry)).filter(Boolean) : [];
 
-  if (game.status === "lobby") {
+  if (!game.isTransportSnapshot && game.status === "lobby") {
     game.joinDeadlineMs = now;
     startMiningRun(game, now);
   }
 
-  if (game.status === "active") {
+  if (!game.isTransportSnapshot && game.status === "active") {
     simulateMiningSession(game, now);
   }
 
   return game;
+}
+
+export function createMiningTransportSession(session, now = Date.now()) {
+  const game = normalizeMiningSession(session, now);
+  return {
+    ...game,
+    isTransportSnapshot: true,
+    map: serializeMiningTransportMap(game.map)
+  };
 }
 
 export function getMiningCurrentPlayer(game, playerId) {
@@ -651,7 +678,11 @@ function normalizeMiningEvent(event, now) {
 }
 
 function normalizeMiningMap(map) {
-  if (!map || !Array.isArray(map.tiles) || !Number.isInteger(map.size)) return null;
+  if (!map) return null;
+  if (typeof map.tilesEncoded === "string" && Number.isInteger(map.size)) {
+    return decodeMiningTransportMap(map);
+  }
+  if (!Array.isArray(map.tiles) || !Number.isInteger(map.size)) return null;
   return {
     size: map.size,
     tiles: map.tiles.map((entry) => normalizeMiningTile(entry))
@@ -671,6 +702,76 @@ function normalizeMiningTile(tile) {
     hiddenExitId: tile.hiddenExitId ? String(tile.hiddenExitId) : "",
     eventId: tile.eventId ? String(tile.eventId) : ""
   };
+}
+
+function serializeMiningTransportMap(map) {
+  if (!map || !Array.isArray(map.tiles) || !Number.isInteger(map.size)) return null;
+  return {
+    size: map.size,
+    transportVersion: MINING_TRANSPORT_MAP_VERSION,
+    tilesEncoded: map.tiles.map((tile) => encodeMiningTransportTile(tile)).join("")
+  };
+}
+
+function decodeMiningTransportMap(map) {
+  const encoded = String(map?.tilesEncoded || "");
+  const size = Math.max(0, Math.round(Number(map?.size || 0)));
+  if (!size || !encoded) return null;
+  const tiles = [];
+  for (let index = 0; index < encoded.length; index += MINING_TILE_TOKEN_SIZE) {
+    tiles.push(decodeMiningTransportTile(encoded.slice(index, index + MINING_TILE_TOKEN_SIZE)));
+  }
+  return {
+    size,
+    tiles
+  };
+}
+
+function encodeMiningTransportTile(tile) {
+  const normalized = normalizeMiningTile(tile);
+  if (normalized.kind === "floor") {
+    return `${MINING_TRANSPORT_FLOOR_CODE}00`;
+  }
+  if (normalized.kind === "exit") {
+    return `${MINING_TRANSPORT_EXIT_CODE}00`;
+  }
+  const oreCode = MINING_TRANSPORT_ORE_CODES[normalized.oreId] || MINING_TRANSPORT_ORE_CODES.stone;
+  return `${oreCode}${toBase36Digit(normalized.hp)}${toBase36Digit(normalized.maxHp)}`;
+}
+
+function decodeMiningTransportTile(token) {
+  const safeToken = String(token || "").padEnd(MINING_TILE_TOKEN_SIZE, "0");
+  const kindCode = safeToken[0];
+  if (kindCode === MINING_TRANSPORT_FLOOR_CODE) {
+    return structuredClone(FLOOR_TILE);
+  }
+  if (kindCode === MINING_TRANSPORT_EXIT_CODE) {
+    return {
+      ...structuredClone(FLOOR_TILE),
+      kind: "exit"
+    };
+  }
+  const oreId = MINING_TRANSPORT_ORE_BY_CODE[kindCode] || "stone";
+  return {
+    kind: "wall",
+    oreId,
+    hp: fromBase36Digit(safeToken[1]),
+    maxHp: fromBase36Digit(safeToken[2]),
+    reward: 0,
+    requiredTier: 0,
+    moleChance: 0,
+    hiddenExitId: "",
+    eventId: ""
+  };
+}
+
+function toBase36Digit(value) {
+  return Math.max(0, Math.min(35, Math.round(Number(value || 0)))).toString(36);
+}
+
+function fromBase36Digit(value) {
+  const parsed = parseInt(String(value || "0"), 36);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function generateMiningMap(playerCount) {

@@ -4,6 +4,7 @@ import {
   MINING_SHOP_ITEMS,
   MINING_TYPE,
   attackMiningMole,
+  createMiningTransportSession,
   createMiningProfile,
   createMiningSession,
   extractMiningPlayer,
@@ -301,7 +302,7 @@ async function writeMiningSession(scopeKey, record, session, now) {
 
 function makeResult(sessionRecord, profile, now, errorCode = "") {
   return {
-    session: sessionRecord ? { ...sessionRecord, content: normalizeMiningSession(sessionRecord.content, now) } : null,
+    session: sessionRecord ? { ...sessionRecord, content: createMiningTransportSession(sessionRecord.content, now) } : null,
     profile,
     serverNowMs: now,
     errorCode
