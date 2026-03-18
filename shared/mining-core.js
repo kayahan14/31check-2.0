@@ -7,13 +7,14 @@ export const MINING_TARGET_RUN_MS = 12 * 60 * 1000;
 export const MINING_EXIT_COLLAPSE_MS = 90 * 1000;
 export const MINING_TIMEOUT_COLLAPSE_MS = 75 * 1000;
 export const MINING_EVENT_LIFETIME_MS = 75 * 1000;
-export const MINING_VIEW_RADIUS = 13;
-export const MINING_TILE_SIZE = 34;
+export const MINING_VIEW_RADIUS = 11;
+export const MINING_TILE_SIZE = 36;
 export const MINING_DEFAULT_WALLET_COINS = 500;
 const MINING_MAX_SIMULATION_STEPS = 24;
-const MINING_MAP_BASE_SIZE = 385;
-const MINING_MAP_PLAYER_GROWTH = 24;
-const MINING_MAP_MAX_SIZE = 513;
+const MINING_MAP_BASE_SIZE = 193;
+const MINING_MAP_PLAYER_GROWTH = 12;
+const MINING_MAP_MAX_SIZE = 257;
+const MINING_EFFECT_LIFETIME_MS = 900;
 
 const FLOOR_TILE = { kind: "floor", oreId: "", hp: 0, maxHp: 0, reward: 0, requiredTier: 0, moleChance: 0 };
 const MINING_TRANSPORT_MAP_VERSION = 1;
@@ -56,14 +57,14 @@ export const MINING_SHOP_ITEMS = [
 ];
 
 export const MINING_ORE_DEFS = {
-  stone: { id: "stone", label: "Tas", color: "#5b6270", reward: 6, hardness: 1, requiredTier: 1, moleChance: 0.04 },
-  coal: { id: "coal", label: "Komur", color: "#424750", reward: 10, hardness: 1, requiredTier: 1, moleChance: 0.05 },
-  copper: { id: "copper", label: "Bakir", color: "#b56d42", reward: 18, hardness: 2, requiredTier: 1, moleChance: 0.06 },
-  iron: { id: "iron", label: "Demir", color: "#88919f", reward: 28, hardness: 2, requiredTier: 1, moleChance: 0.08 },
-  amber: { id: "amber", label: "Amber", color: "#da8c2e", reward: 44, hardness: 3, requiredTier: 2, moleChance: 0.1 },
-  sapphire: { id: "sapphire", label: "Safir", color: "#4e81ff", reward: 76, hardness: 4, requiredTier: 2, moleChance: 0.14 },
-  ruby: { id: "ruby", label: "Yakut", color: "#e55366", reward: 120, hardness: 5, requiredTier: 3, moleChance: 0.18 },
-  starsteel: { id: "starsteel", label: "Yildiz Cevheri", color: "#7ff0ff", reward: 180, hardness: 5, requiredTier: 2, moleChance: 0.22 }
+  stone: { id: "stone", label: "Tas", color: "#5b6270", reward: 6, hardness: 5, requiredTier: 1, moleChance: 0.04 },
+  coal: { id: "coal", label: "Komur", color: "#424750", reward: 10, hardness: 5, requiredTier: 1, moleChance: 0.05 },
+  copper: { id: "copper", label: "Bakir", color: "#b56d42", reward: 18, hardness: 6, requiredTier: 1, moleChance: 0.06 },
+  iron: { id: "iron", label: "Demir", color: "#88919f", reward: 28, hardness: 7, requiredTier: 1, moleChance: 0.08 },
+  amber: { id: "amber", label: "Amber", color: "#da8c2e", reward: 44, hardness: 8, requiredTier: 2, moleChance: 0.1 },
+  sapphire: { id: "sapphire", label: "Safir", color: "#4e81ff", reward: 76, hardness: 9, requiredTier: 2, moleChance: 0.14 },
+  ruby: { id: "ruby", label: "Yakut", color: "#e55366", reward: 120, hardness: 11, requiredTier: 3, moleChance: 0.18 },
+  starsteel: { id: "starsteel", label: "Yildiz Cevheri", color: "#7ff0ff", reward: 180, hardness: 12, requiredTier: 2, moleChance: 0.22 }
 };
 
 export function createMiningProfile(user) {
@@ -116,6 +117,7 @@ export function createMiningSession(actor, profile, now = Date.now()) {
     discoveredExitIds: [],
     activeExitId: "",
     map: null,
+    effects: [],
     moles: [],
     players: [createLobbyPlayer(actor, normalizedProfile.loadout)],
     sessionSeed: Math.floor(Math.random() * 1_000_000_000)
@@ -144,6 +146,7 @@ export function hydrateMiningRuntimeSession(content, now = Date.now()) {
   game.discoveredExitIds = Array.isArray(game.discoveredExitIds) ? game.discoveredExitIds.map((entry) => String(entry)) : [];
   game.currentEvent = normalizeMiningEvent(game.currentEvent, now);
   game.map = normalizeMiningMap(game.map);
+  game.effects = Array.isArray(game.effects) ? game.effects.map((entry) => normalizeMiningEffect(entry, now)).filter(Boolean) : [];
   game.moles = Array.isArray(game.moles) ? game.moles.map((entry) => normalizeMiningMole(entry)).filter(Boolean) : [];
   game.players = Array.isArray(game.players) ? game.players.map((entry) => normalizeMiningPlayer(entry)).filter(Boolean) : [];
 
@@ -270,7 +273,9 @@ export function moveMiningPlayer(game, playerId, dx, dy, now = Date.now()) {
 
   player.x += dx;
   player.y += dy;
+  player.facing = getFacingFromDelta(dx, dy);
   player.lastAction = "move";
+  player.lastActionAtMs = now;
   player.nextActionAtMs = now + getMoveCooldownMs(player);
   if (nextTile.kind === "exit") {
     const extraction = extractMiningPlayer(game, playerId, now);
@@ -319,8 +324,19 @@ export function mineMiningTile(game, playerId, targetX, targetY, now = Date.now(
   if (getPickaxeTier(player) < Number(tile.requiredTier || 1)) return { changed: false, reason: "pick-tier" };
 
   tile.hp = Math.max(0, Number(tile.hp || tile.maxHp || 1) - getPickaxePower(player));
+  player.facing = getFacingFromDelta(targetX - player.x, targetY - player.y);
   player.lastAction = "mine";
+  player.lastActionAtMs = now;
+  player.lastActionTargetX = targetX;
+  player.lastActionTargetY = targetY;
   player.nextActionAtMs = now + getMineCooldownMs(player, tile);
+  pushMiningEffect(game, {
+    type: "mine-hit",
+    x: targetX,
+    y: targetY,
+    actorId: player.id,
+    atMs: now
+  }, now);
 
   if (tile.hp > 0) {
     game.summary = `${player.name} ${getOreLabel(tile.oreId)} damarini zorluyor.`;
@@ -360,6 +376,13 @@ export function mineMiningTile(game, playerId, targetX, targetY, now = Date.now(
   tile.moleChance = 0;
   delete tile.eventId;
   delete tile.hiddenExitId;
+  pushMiningEffect(game, {
+    type: "mine-break",
+    x: targetX,
+    y: targetY,
+    actorId: player.id,
+    atMs: now
+  }, now);
   game.summary = `${player.name} ${reward} coin topladi.${spawnedMole ? " Bir kostebek homurdanmasi duyuldu." : ""}`;
   game.revision += 1;
   return { changed: true, reason: "", player, tileBroken: true, foundExit: false, reward, spawnedMole };
@@ -373,8 +396,27 @@ export function attackMiningMole(game, playerId, targetId, now = Date.now()) {
   if (now < Number(player.nextActionAtMs || 0)) return { changed: false, reason: "cooldown" };
 
   mole.hp = Math.max(0, Number(mole.hp || 0) - 18);
+  player.facing = getFacingFromDelta(mole.x - player.x, mole.y - player.y);
   player.nextActionAtMs = now + 650;
   player.lastAction = "attack";
+  player.lastActionAtMs = now;
+  player.lastActionTargetX = mole.x;
+  player.lastActionTargetY = mole.y;
+  mole.hurtAtMs = now;
+  pushMiningEffect(game, {
+    type: "attack-swing",
+    x: player.x,
+    y: player.y,
+    actorId: player.id,
+    atMs: now
+  }, now);
+  pushMiningEffect(game, {
+    type: mole.hp <= 0 ? "mole-break" : "mole-hit",
+    x: mole.x,
+    y: mole.y,
+    actorId: player.id,
+    atMs: now
+  }, now);
   if (mole.hp <= 0) {
     game.moles = game.moles.filter((entry) => entry.id !== mole.id);
     game.summary = `${player.name} bir kostebegi uzaklastirdi.`;
@@ -454,6 +496,7 @@ function startMiningRun(game, now) {
   game.lastSimulatedAtMs = now;
   game.nextEventAtMs = now + randomInt(120000, 180000);
   game.currentEvent = null;
+  game.effects = [];
   game.moles = [];
   game.summary = "Kazilar basladi. Iki gizli cikis dis halkalarda sakli.";
   game.revision += 1;
@@ -461,6 +504,7 @@ function startMiningRun(game, now) {
 
 function simulateMiningSession(game, now) {
   if (!game.map) return;
+  pruneMiningEffects(game, now);
 
   if (game.currentEvent && now >= Number(game.currentEvent.expiresAtMs || 0)) {
     clearExpiredMiningEvent(game);
@@ -604,7 +648,17 @@ function simulateMoleTick(game, now) {
         const stolenCoins = Math.min(target.runCoins, Math.max(4, Math.round((mole.damage || 8) * 1.6)));
         target.runCoins -= stolenCoins;
         target.totalWeight = computePlayerWeight(target);
+        target.lastHurtAtMs = now;
+        target.facing = getFacingFromDelta(target.x - mole.x, target.y - mole.y) || target.facing;
+        mole.lastAttackAtMs = now;
         mole.nextAttackAtMs = now + 1400;
+        pushMiningEffect(game, {
+          type: "player-hit",
+          x: target.x,
+          y: target.y,
+          actorId: target.id,
+          atMs: now
+        }, now);
         if (target.integrity <= 0) {
           target.status = "collapsed";
           game.summary = `${target.name} kostebeklere yenildi.`;
@@ -618,6 +672,7 @@ function simulateMoleTick(game, now) {
     const nextTile = getMiningTile(game.map, mole.x + step.dx, mole.y + step.dy);
     const occupied = (game.players || []).some((entry) => entry.status === "active" && entry.x === mole.x + step.dx && entry.y === mole.y + step.dy);
     if (nextTile && nextTile.kind === "floor" && !occupied) {
+      mole.facing = getFacingFromDelta(step.dx, step.dy);
       mole.x += step.dx;
       mole.y += step.dy;
     }
@@ -640,11 +695,11 @@ function getPlayerThreat(player, mole) {
 }
 
 function getMoveCooldownMs(player) {
-  return 230 + Math.min(820, Math.round(player.runCoins * 1.2));
+  return 95 + Math.min(250, Math.round(player.runCoins * 0.32));
 }
 
 function getMineCooldownMs(player, tile) {
-  return 360 + (Number(tile.maxHp || tile.hp || 1) * 260) + Math.min(600, Math.round(player.runCoins * 0.8));
+  return 170 + (Number(tile.maxHp || tile.hp || 1) * 52) + Math.min(180, Math.round(player.runCoins * 0.14));
 }
 
 function getPickaxeTier(player) {
@@ -668,6 +723,11 @@ function createLobbyPlayer(actor, loadout) {
     nextActionAtMs: 0,
     extractedAtMs: 0,
     lastAction: "",
+    lastActionAtMs: 0,
+    lastActionTargetX: 0,
+    lastActionTargetY: 0,
+    lastHurtAtMs: 0,
+    facing: "right",
     loadout: normalizeLoadout(loadout)
   };
 }
@@ -686,6 +746,11 @@ function normalizeMiningPlayer(player) {
     nextActionAtMs: Math.max(0, Math.round(Number(player.nextActionAtMs || 0))),
     extractedAtMs: Math.max(0, Math.round(Number(player.extractedAtMs || 0))),
     lastAction: String(player.lastAction || ""),
+    lastActionAtMs: Math.max(0, Math.round(Number(player.lastActionAtMs || 0))),
+    lastActionTargetX: Math.max(0, Math.round(Number((player.lastActionTargetX ?? player.x) || 0))),
+    lastActionTargetY: Math.max(0, Math.round(Number((player.lastActionTargetY ?? player.y) || 0))),
+    lastHurtAtMs: Math.max(0, Math.round(Number(player.lastHurtAtMs || 0))),
+    facing: normalizeFacing(player.facing),
     loadout: normalizeLoadout(player.loadout)
   };
 }
@@ -698,7 +763,25 @@ function normalizeMiningMole(mole) {
     y: Math.max(0, Math.round(Number(mole.y || 0))),
     hp: Math.max(1, Math.round(Number(mole.hp || 40))),
     damage: Math.max(1, Math.round(Number(mole.damage || 8))),
-    nextAttackAtMs: Math.max(0, Math.round(Number(mole.nextAttackAtMs || 0)))
+    nextAttackAtMs: Math.max(0, Math.round(Number(mole.nextAttackAtMs || 0))),
+    lastAttackAtMs: Math.max(0, Math.round(Number(mole.lastAttackAtMs || 0))),
+    hurtAtMs: Math.max(0, Math.round(Number(mole.hurtAtMs || 0))),
+    facing: normalizeFacing(mole.facing)
+  };
+}
+
+function normalizeMiningEffect(effect, now) {
+  if (!effect) return null;
+  const atMs = Math.max(0, Math.round(Number(effect.atMs || now)));
+  if ((now - atMs) > MINING_EFFECT_LIFETIME_MS) {
+    return null;
+  }
+  return {
+    type: String(effect.type || ""),
+    x: Math.max(0, Math.round(Number(effect.x || 0))),
+    y: Math.max(0, Math.round(Number(effect.y || 0))),
+    actorId: String(effect.actorId || ""),
+    atMs
   };
 }
 
@@ -1059,6 +1142,36 @@ function stepToward(from, to) {
 
 function manhattan(ax, ay, bx, by) {
   return Math.abs(ax - bx) + Math.abs(ay - by);
+}
+
+function normalizeFacing(value) {
+  const facing = String(value || "").toLowerCase();
+  if (["up", "down", "left", "right"].includes(facing)) {
+    return facing;
+  }
+  return "right";
+}
+
+function getFacingFromDelta(dx, dy) {
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    if (dx > 0) return "right";
+    if (dx < 0) return "left";
+  }
+  if (dy > 0) return "down";
+  if (dy < 0) return "up";
+  return "";
+}
+
+function pushMiningEffect(game, effect, now = Date.now()) {
+  game.effects ||= [];
+  const normalized = normalizeMiningEffect(effect, now);
+  if (!normalized) return;
+  game.effects.push(normalized);
+  pruneMiningEffects(game, now);
+}
+
+function pruneMiningEffects(game, now = Date.now()) {
+  game.effects = (game.effects || []).filter((entry) => entry && (now - Number(entry.atMs || 0)) <= MINING_EFFECT_LIFETIME_MS);
 }
 
 function randomInt(min, max) {

@@ -83,9 +83,14 @@ const DRAGON_SPEED_STAGES = [
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const MINING_ACTION_TICK_MS = 170;
+const MINING_MIN_ZOOM = 1;
+const MINING_MAX_ZOOM = 1.8;
+const MINING_DEFAULT_ZOOM = 1.3;
+const MINING_BASE_VISIBLE_TILES = 15.5;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
+const LOCAL_MINING_ZOOM_KEY = "31check:mining:zoom";
 const DRAGON_CHANNEL_ID = "casino:dragon";
 
 const FALLBACK_MESSAGE = {
@@ -130,6 +135,12 @@ const state = {
   miningSessionSyncHandle: null,
   miningUiTickerHandle: null,
   miningUiLastRenderAtMs: 0,
+  miningCanvasRaf: 0,
+  miningCanvasLastFrameAtMs: 0,
+  miningCameraX: 0,
+  miningCameraY: 0,
+  miningVisualPlayers: {},
+  miningZoom: loadMiningZoomPreference(),
   miningViewTab: "entrance",
   miningQueuedDirections: [],
   miningQueuedInteraction: null,
@@ -694,6 +705,7 @@ function stopMessageSync() {
   stopDragonSessionSync();
   stopDragonModalLoop();
   stopMiningSessionSync();
+  stopMiningCanvasLoop();
   closeRealtimeSocket("dragon");
   closeRealtimeSocket("mining");
 }
@@ -845,6 +857,9 @@ function render() {
   `;
 
   bindRuntimeUi();
+  if (!isMiningView) {
+    stopMiningCanvasLoop();
+  }
   syncDragonModalLoop();
   restoreRenderFocus(focusSnapshot);
   if (shouldRestoreComposerFocus) {
@@ -1081,7 +1096,11 @@ function bindRuntimeUi() {
   const miningCanvas = document.getElementById("miningCanvas");
   if (miningCanvas instanceof HTMLCanvasElement) {
     miningCanvas.addEventListener("pointerdown", handleMiningCanvasClick);
+    miningCanvas.addEventListener("wheel", handleMiningCanvasWheel, { passive: false });
+    startMiningCanvasLoop();
     renderMiningCanvas(miningCanvas);
+  } else {
+    stopMiningCanvasLoop();
   }
   const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
   if (dragonAutoInput) {
@@ -2701,6 +2720,7 @@ function applyMiningTransportPayload(payload, options = {}) {
   });
   state.miningSession = nextSession;
   state.miningProfile = nextProfile;
+  syncMiningVisualState(nextSession?.content || null);
   const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
   const player = state.miningSession?.content ? getMiningCurrentPlayer(state.miningSession.content, state.currentUser.id) : null;
   if (phase !== "active" || !player || player.status !== "active") {
@@ -2712,11 +2732,119 @@ function applyMiningTransportPayload(payload, options = {}) {
     if (isCasinoMiningView()) {
       state.miningUiLastRenderAtMs = Date.now();
       if (previousPhase === "active" && phase === "active" && updateMiningActiveStageDom({ repaintCanvas: true })) {
+        requestMiningCanvasFrame();
         return;
       }
       render();
+      requestMiningCanvasFrame();
     }
   }
+}
+
+function syncMiningVisualState(session, now = getMiningNow()) {
+  if (!session) {
+    state.miningVisualPlayers = {};
+    state.miningCameraX = 0;
+    state.miningCameraY = 0;
+    return;
+  }
+
+  const previousVisuals = state.miningVisualPlayers || {};
+  const previousLocal = previousVisuals[state.currentUser.id] || null;
+  const nextVisuals = {};
+  for (const player of session.players || []) {
+    const previous = previousVisuals[player.id] || null;
+    const teleported = previous && (Math.abs((previous.targetX ?? previous.x) - player.x) + Math.abs((previous.targetY ?? previous.y) - player.y) > 2);
+    nextVisuals[player.id] = {
+      id: player.id,
+      name: player.name,
+      x: !previous || teleported || player.status !== "active" ? player.x : previous.x,
+      y: !previous || teleported || player.status !== "active" ? player.y : previous.y,
+      targetX: player.x,
+      targetY: player.y,
+      status: player.status,
+      facing: player.facing || previous?.facing || "right",
+      integrity: Number(player.integrity || 0),
+      runCoins: Number(player.runCoins || 0),
+      lastAction: player.lastAction || "",
+      lastActionAtMs: Number(player.lastActionAtMs || 0),
+      lastActionTargetX: Number(player.lastActionTargetX ?? player.x),
+      lastActionTargetY: Number(player.lastActionTargetY ?? player.y),
+      lastHurtAtMs: Number(player.lastHurtAtMs || 0)
+    };
+  }
+
+  state.miningVisualPlayers = nextVisuals;
+  const localVisual = nextVisuals[state.currentUser.id] || null;
+  if (!localVisual) return;
+
+  const shouldSnapCamera = !previousLocal
+    || !Number.isFinite(state.miningCameraX)
+    || !Number.isFinite(state.miningCameraY)
+    || (Math.abs(state.miningCameraX - localVisual.targetX) + Math.abs(state.miningCameraY - localVisual.targetY) > 10);
+  if (shouldSnapCamera) {
+    state.miningCameraX = localVisual.targetX;
+    state.miningCameraY = localVisual.targetY;
+  }
+}
+
+function startMiningCanvasLoop() {
+  if (state.miningCanvasRaf) return;
+  state.miningCanvasLastFrameAtMs = 0;
+  state.miningCanvasRaf = window.requestAnimationFrame(tickMiningCanvasFrame);
+}
+
+function stopMiningCanvasLoop() {
+  if (!state.miningCanvasRaf) return;
+  window.cancelAnimationFrame(state.miningCanvasRaf);
+  state.miningCanvasRaf = 0;
+  state.miningCanvasLastFrameAtMs = 0;
+}
+
+function requestMiningCanvasFrame() {
+  const canvas = document.getElementById("miningCanvas");
+  if (!(canvas instanceof HTMLCanvasElement)) return;
+  startMiningCanvasLoop();
+}
+
+function tickMiningCanvasFrame(frameAtMs) {
+  state.miningCanvasRaf = 0;
+  if (!isCasinoMiningView()) {
+    stopMiningCanvasLoop();
+    return;
+  }
+  const canvas = document.getElementById("miningCanvas");
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    stopMiningCanvasLoop();
+    return;
+  }
+
+  const deltaMs = state.miningCanvasLastFrameAtMs ? Math.min(34, Math.max(8, frameAtMs - state.miningCanvasLastFrameAtMs)) : 16;
+  state.miningCanvasLastFrameAtMs = frameAtMs;
+  advanceMiningVisualState(deltaMs);
+  renderMiningCanvas(canvas);
+  state.miningCanvasRaf = window.requestAnimationFrame(tickMiningCanvasFrame);
+}
+
+function advanceMiningVisualState(deltaMs) {
+  const blend = 1 - Math.exp(-deltaMs / 90);
+  for (const entry of Object.values(state.miningVisualPlayers || {})) {
+    if (!entry) continue;
+    entry.x += (entry.targetX - entry.x) * blend;
+    entry.y += (entry.targetY - entry.y) * blend;
+    if (Math.abs(entry.targetX - entry.x) < 0.002) entry.x = entry.targetX;
+    if (Math.abs(entry.targetY - entry.y) < 0.002) entry.y = entry.targetY;
+  }
+
+  const localVisual = state.miningVisualPlayers[state.currentUser.id] || null;
+  if (!localVisual) return;
+  const motionX = clamp(localVisual.targetX - localVisual.x, -1, 1);
+  const motionY = clamp(localVisual.targetY - localVisual.y, -1, 1);
+  const leadX = motionX * 0.22;
+  const leadY = motionY * 0.22;
+  const cameraBlend = 1 - Math.exp(-deltaMs / 150);
+  state.miningCameraX += ((localVisual.x + leadX) - state.miningCameraX) * cameraBlend;
+  state.miningCameraY += ((localVisual.y + leadY) - state.miningCameraY) * cameraBlend;
 }
 
 function getMiningTransportRenderKey(sessionRecord, profile) {
@@ -3033,92 +3161,54 @@ function renderMiningCanvas(canvas) {
   const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
   const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
   const map = session?.map;
+  syncMiningCanvasResolution(canvas);
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#18151f";
+  context.fillStyle = "#17131a";
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   if (!session || !map) {
     context.fillStyle = "#f5e8c8";
-    context.font = "700 28px Arial";
+    context.font = "700 28px Trebuchet MS";
     context.textAlign = "center";
     context.fillText("Mining", canvas.width / 2, canvas.height / 2 - 10);
-    context.font = "14px Arial";
+    context.font = "14px Trebuchet MS";
     context.fillText("Lobi acildiginda harita burada canlanacak.", canvas.width / 2, canvas.height / 2 + 20);
     return;
   }
 
-  const { originX, originY, visibleSize } = getMiningViewport(session, player);
+  const now = getMiningNow();
+  const metrics = getMiningCanvasMetrics(canvas, session, player);
 
-  for (let row = 0; row < visibleSize; row += 1) {
-    for (let col = 0; col < visibleSize; col += 1) {
-      const tileX = originX + col;
-      const tileY = originY + row;
+  drawMiningBackdrop(context, metrics, now);
+
+  const startX = Math.floor(metrics.worldStartX) - 1;
+  const startY = Math.floor(metrics.worldStartY) - 1;
+  const endX = Math.ceil(metrics.worldStartX + metrics.visibleWidthTiles) + 1;
+  const endY = Math.ceil(metrics.worldStartY + metrics.visibleHeightTiles) + 1;
+
+  for (let tileY = startY; tileY <= endY; tileY += 1) {
+    for (let tileX = startX; tileX <= endX; tileX += 1) {
       const tile = getMiningTile(map, tileX, tileY);
-      const px = col * MINING_TILE_SIZE;
-      const py = row * MINING_TILE_SIZE;
-      context.fillStyle = getMiningTileColor(tile);
-      context.fillRect(px + 1, py + 1, MINING_TILE_SIZE - 2, MINING_TILE_SIZE - 2);
-
-      if (tile?.kind === "wall" && tile.oreId) {
-        context.fillStyle = "rgba(255,255,255,0.12)";
-        context.fillRect(px + 8, py + 8, MINING_TILE_SIZE - 16, MINING_TILE_SIZE - 16);
-        const damageRatio = tile.maxHp > 0 ? 1 - (tile.hp / tile.maxHp) : 0;
-        if (damageRatio > 0.01) {
-          context.strokeStyle = `rgba(242, 245, 255, ${Math.min(0.88, 0.24 + (damageRatio * 0.6))})`;
-          context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.045);
-          context.beginPath();
-          context.moveTo(px + (MINING_TILE_SIZE * 0.28), py + (MINING_TILE_SIZE * 0.22));
-          context.lineTo(px + (MINING_TILE_SIZE * 0.54), py + (MINING_TILE_SIZE * 0.48));
-          context.lineTo(px + (MINING_TILE_SIZE * 0.42), py + (MINING_TILE_SIZE * 0.72));
-          context.moveTo(px + (MINING_TILE_SIZE * 0.62), py + (MINING_TILE_SIZE * 0.26));
-          context.lineTo(px + (MINING_TILE_SIZE * 0.48), py + (MINING_TILE_SIZE * 0.46));
-          if (damageRatio > 0.34) {
-            context.moveTo(px + (MINING_TILE_SIZE * 0.24), py + (MINING_TILE_SIZE * 0.54));
-            context.lineTo(px + (MINING_TILE_SIZE * 0.52), py + (MINING_TILE_SIZE * 0.62));
-          }
-          if (damageRatio > 0.66) {
-            context.moveTo(px + (MINING_TILE_SIZE * 0.62), py + (MINING_TILE_SIZE * 0.58));
-            context.lineTo(px + (MINING_TILE_SIZE * 0.74), py + (MINING_TILE_SIZE * 0.78));
-          }
-          context.stroke();
-        }
-      }
-      if (tile?.kind === "exit") {
-        context.fillStyle = "#ffe78d";
-        context.fillRect(px + 8, py + 8, MINING_TILE_SIZE - 16, MINING_TILE_SIZE - 16);
-        context.strokeStyle = "rgba(255, 255, 255, 0.75)";
-        context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.05);
-        context.strokeRect(px + 10, py + 10, MINING_TILE_SIZE - 20, MINING_TILE_SIZE - 20);
+      if (!tile) continue;
+      if (tile.kind === "wall" && tile.oreId) {
+        drawMiningWallTile(context, metrics, tileX, tileY, tile, now);
+      } else if (tile.kind === "exit") {
+        drawMiningExitTile(context, metrics, tileX, tileY, now);
       }
     }
   }
 
+  drawMiningEffects(context, metrics, session.effects || [], now);
+
   for (const mole of session.moles || []) {
-    if (mole.x < originX || mole.y < originY || mole.x >= originX + visibleSize || mole.y >= originY + visibleSize) continue;
-    const px = (mole.x - originX) * MINING_TILE_SIZE;
-    const py = (mole.y - originY) * MINING_TILE_SIZE;
-    context.fillStyle = "#7a4938";
-    context.beginPath();
-    context.arc(px + (MINING_TILE_SIZE / 2), py + (MINING_TILE_SIZE / 2), MINING_TILE_SIZE * 0.28, 0, Math.PI * 2);
-    context.fill();
+    drawMiningMoleSprite(context, metrics, mole, now);
   }
 
   for (const entry of session.players || []) {
-    if (entry.x < originX || entry.y < originY || entry.x >= originX + visibleSize || entry.y >= originY + visibleSize) continue;
-    const px = (entry.x - originX) * MINING_TILE_SIZE;
-    const py = (entry.y - originY) * MINING_TILE_SIZE;
-    context.fillStyle = entry.id === state.currentUser.id ? "#6ec8ff" : "#9effa0";
-    context.beginPath();
-    context.arc(px + (MINING_TILE_SIZE / 2), py + (MINING_TILE_SIZE / 2), MINING_TILE_SIZE * 0.24, 0, Math.PI * 2);
-    context.fill();
-    drawMiningPickaxe(context, px, py);
-    context.fillStyle = "#0f1014";
-    context.font = "900 10px Arial";
-    context.textAlign = "center";
-    context.fillText(entry.name.slice(0, 3).toUpperCase(), px + (MINING_TILE_SIZE / 2), py + MINING_TILE_SIZE - 6);
+    drawMiningPlayerSprite(context, metrics, entry, now);
   }
 
-  drawMiningQueuedPath(context, session, originX, originY, player);
+  drawMiningQueuedPath(context, metrics);
 }
 
 function handleMiningCanvasClick(event) {
@@ -3134,20 +3224,31 @@ function handleMiningCanvasClick(event) {
   const scaleY = canvas.height / Math.max(1, rect.height);
   const localX = (event.clientX - rect.left) * scaleX;
   const localY = (event.clientY - rect.top) * scaleY;
-  const col = Math.floor(localX / MINING_TILE_SIZE);
-  const row = Math.floor(localY / MINING_TILE_SIZE);
-  const { originX, originY } = getMiningViewport(session, player);
-  const targetX = originX + col;
-  const targetY = originY + row;
+  const metrics = getMiningCanvasMetrics(canvas, session, player);
+  const targetX = Math.floor(metrics.worldStartX + (localX / metrics.tilePx));
+  const targetY = Math.floor(metrics.worldStartY + (localY / metrics.tilePx));
   clearMiningQueuedActions();
   state.miningTargetTile = { x: targetX, y: targetY };
-  renderMiningCanvas(canvas);
+  requestMiningCanvasFrame();
   const intent = { targetX, targetY };
   if (state.interactiveActionLocks["mining"]) {
     state.miningBufferedInput = intent;
     return;
   }
   void dispatchMiningCanvasIntent(intent);
+}
+
+function handleMiningCanvasWheel(event) {
+  event.preventDefault();
+  const nextZoom = clamp(
+    state.miningZoom + (event.deltaY < 0 ? 0.08 : -0.08),
+    MINING_MIN_ZOOM,
+    MINING_MAX_ZOOM
+  );
+  if (Math.abs(nextZoom - state.miningZoom) < 0.001) return;
+  state.miningZoom = nextZoom;
+  saveMiningZoomPreference();
+  requestMiningCanvasFrame();
 }
 
 function getMiningDirection(from, to) {
@@ -3286,6 +3387,13 @@ function getMiningViewport(session, player) {
   const mapSize = Number(session?.map?.size || 0);
   const visibleSize = (MINING_VIEW_RADIUS * 2) + 1;
   const fallback = Math.max(0, Math.floor(mapSize / 2) - MINING_VIEW_RADIUS);
+  if (Number.isInteger(session?.map?.originX) && Number.isInteger(session?.map?.originY) && Number.isInteger(session?.map?.windowSize) && session.map.windowSize > 0) {
+    return {
+      originX: session.map.originX,
+      originY: session.map.originY,
+      visibleSize: session.map.windowSize
+    };
+  }
   if (!mapSize) {
     return { originX: fallback, originY: fallback, visibleSize };
   }
@@ -3377,64 +3485,41 @@ function findMiningPath(session, start, goal) {
   return path.reverse().filter(Boolean);
 }
 
-function drawMiningQueuedPath(context, session, originX, originY, player) {
-  if (!player) return;
-  const projectedTiles = [];
-  let current = { x: player.x, y: player.y };
-  for (const direction of state.miningQueuedDirections || []) {
-    if (direction === "up") current = { x: current.x, y: current.y - 1 };
-    else if (direction === "down") current = { x: current.x, y: current.y + 1 };
-    else if (direction === "left") current = { x: current.x - 1, y: current.y };
-    else if (direction === "right") current = { x: current.x + 1, y: current.y };
-    projectedTiles.push(current);
-  }
-
+function drawMiningQueuedPath(context, metrics) {
+  if (!state.miningTargetTile) return;
+  const { x, y } = state.miningTargetTile;
+  const rect = getMiningTileScreenRect(metrics, x, y);
+  if (!rect) return;
+  const pulse = 0.5 + (Math.sin(getMiningNow() / 120) * 0.5);
   context.save();
-  context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.09);
-  context.strokeStyle = "rgba(255, 245, 164, 0.88)";
-  context.setLineDash([MINING_TILE_SIZE * 0.18, MINING_TILE_SIZE * 0.14]);
-  context.beginPath();
-  context.moveTo(((player.x - originX) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2), ((player.y - originY) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2));
-  projectedTiles.forEach((tile, index) => {
-    if (tile.x < originX || tile.y < originY || tile.x >= originX + ((MINING_VIEW_RADIUS * 2) + 1) || tile.y >= originY + ((MINING_VIEW_RADIUS * 2) + 1)) {
-      return;
-    }
-    const px = ((tile.x - originX) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2);
-    const py = ((tile.y - originY) * MINING_TILE_SIZE) + (MINING_TILE_SIZE / 2);
-    if (index === 0 && projectedTiles.length === 1) {
-      context.lineTo(px, py);
-      return;
-    }
-    context.lineTo(px, py);
-  });
-  context.stroke();
+  context.strokeStyle = `rgba(255, 248, 180, ${0.45 + (pulse * 0.4)})`;
+  context.lineWidth = Math.max(3, rect.size * 0.06);
+  context.setLineDash([rect.size * 0.22, rect.size * 0.14]);
+  context.strokeRect(rect.x + (rect.size * 0.08), rect.y + (rect.size * 0.08), rect.size * 0.84, rect.size * 0.84);
   context.setLineDash([]);
-
-  if (state.miningTargetTile) {
-    const { x, y } = state.miningTargetTile;
-    if (x >= originX && y >= originY && x < originX + ((MINING_VIEW_RADIUS * 2) + 1) && y < originY + ((MINING_VIEW_RADIUS * 2) + 1)) {
-      const px = (x - originX) * MINING_TILE_SIZE;
-      const py = (y - originY) * MINING_TILE_SIZE;
-      context.strokeStyle = "rgba(255, 255, 255, 0.94)";
-      context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.08);
-      context.strokeRect(px + 4, py + 4, MINING_TILE_SIZE - 8, MINING_TILE_SIZE - 8);
-    }
-  }
   context.restore();
 }
 
-function drawMiningPickaxe(context, px, py) {
+function drawMiningPickaxe(context, px, py, size, facing = "right", swing = 0) {
   context.save();
-  context.translate(px + (MINING_TILE_SIZE * 0.63), py + (MINING_TILE_SIZE * 0.36));
-  context.rotate(-0.65);
+  const direction = facing === "left" ? -1 : 1;
+  context.translate(px, py);
+  context.scale(direction, 1);
+  context.rotate((-0.78 + (swing * 0.95)) * direction);
   context.strokeStyle = "#6f4d32";
-  context.lineWidth = Math.max(2, MINING_TILE_SIZE * 0.05);
+  context.lineWidth = Math.max(2, size * 0.08);
   context.beginPath();
-  context.moveTo(0, -2);
-  context.lineTo(0, MINING_TILE_SIZE * 0.22);
+  context.moveTo(0, -size * 0.05);
+  context.lineTo(0, size * 0.32);
   context.stroke();
-  context.fillStyle = "#d6dde7";
-  context.fillRect(-(MINING_TILE_SIZE * 0.14), -(MINING_TILE_SIZE * 0.08), MINING_TILE_SIZE * 0.28, MINING_TILE_SIZE * 0.08);
+  context.fillStyle = "#dee8f6";
+  context.beginPath();
+  context.moveTo(-size * 0.26, -size * 0.12);
+  context.quadraticCurveTo(-size * 0.06, -size * 0.26, size * 0.2, -size * 0.04);
+  context.lineTo(size * 0.1, size * 0.02);
+  context.quadraticCurveTo(-size * 0.08, -size * 0.12, -size * 0.28, 0);
+  context.closePath();
+  context.fill();
   context.restore();
 }
 
@@ -3453,6 +3538,435 @@ function getMiningTileColor(tile) {
     starsteel: "#71f4ff"
   };
   return oreColors[tile.oreId] || "#525867";
+}
+
+function syncMiningCanvasResolution(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width * window.devicePixelRatio));
+  const height = Math.max(1, Math.round(rect.height * window.devicePixelRatio));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+
+function getMiningCanvasMetrics(canvas, session, player) {
+  const map = session?.map || null;
+  const zoom = clamp(state.miningZoom, MINING_MIN_ZOOM, MINING_MAX_ZOOM);
+  const shortestEdge = Math.max(1, Math.min(canvas.width, canvas.height));
+  const visibleShortEdgeTiles = MINING_BASE_VISIBLE_TILES / zoom;
+  const tilePx = shortestEdge / visibleShortEdgeTiles;
+  const visibleWidthTiles = canvas.width / tilePx;
+  const visibleHeightTiles = canvas.height / tilePx;
+  const fallbackX = player ? player.x : Math.floor(Number(map?.size || 0) / 2);
+  const fallbackY = player ? player.y : Math.floor(Number(map?.size || 0) / 2);
+  const rawCameraX = Number.isFinite(state.miningCameraX) ? state.miningCameraX : fallbackX;
+  const rawCameraY = Number.isFinite(state.miningCameraY) ? state.miningCameraY : fallbackY;
+  const bounds = getMiningCameraBounds(map, visibleWidthTiles, visibleHeightTiles);
+  const cameraX = clamp(rawCameraX, bounds.minX, bounds.maxX);
+  const cameraY = clamp(rawCameraY, bounds.minY, bounds.maxY);
+  state.miningCameraX = cameraX;
+  state.miningCameraY = cameraY;
+  return {
+    canvas,
+    map,
+    tilePx,
+    zoom,
+    cameraX,
+    cameraY,
+    visibleWidthTiles,
+    visibleHeightTiles,
+    worldStartX: cameraX - (visibleWidthTiles / 2),
+    worldStartY: cameraY - (visibleHeightTiles / 2),
+    worldEndX: cameraX + (visibleWidthTiles / 2),
+    worldEndY: cameraY + (visibleHeightTiles / 2)
+  };
+}
+
+function getMiningCameraBounds(map, visibleWidthTiles, visibleHeightTiles) {
+  const originX = Number(map?.originX || 0);
+  const originY = Number(map?.originY || 0);
+  const windowSize = Math.max(1, Number(map?.windowSize || map?.size || 1));
+  const halfWidth = visibleWidthTiles / 2;
+  const halfHeight = visibleHeightTiles / 2;
+  const minX = originX + halfWidth;
+  const maxX = originX + windowSize - halfWidth;
+  const minY = originY + halfHeight;
+  const maxY = originY + windowSize - halfHeight;
+  return {
+    minX: minX > maxX ? originX + (windowSize / 2) : minX,
+    maxX: minX > maxX ? originX + (windowSize / 2) : maxX,
+    minY: minY > maxY ? originY + (windowSize / 2) : minY,
+    maxY: minY > maxY ? originY + (windowSize / 2) : maxY
+  };
+}
+
+function getMiningTileScreenRect(metrics, tileX, tileY) {
+  const x = (tileX - metrics.worldStartX) * metrics.tilePx;
+  const y = (tileY - metrics.worldStartY) * metrics.tilePx;
+  const size = metrics.tilePx;
+  if ((x + size) < -size || (y + size) < -size || x > metrics.canvas.width + size || y > metrics.canvas.height + size) {
+    return null;
+  }
+  return { x, y, size, centerX: x + (size / 2), centerY: y + (size / 2) };
+}
+
+function drawMiningBackdrop(context, metrics, now) {
+  const gradient = context.createLinearGradient(0, 0, 0, metrics.canvas.height);
+  gradient.addColorStop(0, "#3f2b20");
+  gradient.addColorStop(0.45, "#241717");
+  gradient.addColorStop(1, "#140f14");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, metrics.canvas.width, metrics.canvas.height);
+
+  const glow = context.createRadialGradient(
+    metrics.canvas.width * 0.5,
+    metrics.canvas.height * 0.48,
+    metrics.tilePx * 0.4,
+    metrics.canvas.width * 0.5,
+    metrics.canvas.height * 0.48,
+    metrics.canvas.width * 0.58
+  );
+  glow.addColorStop(0, "rgba(246, 204, 122, 0.18)");
+  glow.addColorStop(0.65, "rgba(110, 63, 38, 0.08)");
+  glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+  context.fillStyle = glow;
+  context.fillRect(0, 0, metrics.canvas.width, metrics.canvas.height);
+
+  const dustOffset = (now / 38) % metrics.tilePx;
+  context.save();
+  context.strokeStyle = "rgba(255, 231, 182, 0.03)";
+  context.lineWidth = Math.max(1, metrics.tilePx * 0.015);
+  for (let x = -metrics.tilePx; x <= metrics.canvas.width + metrics.tilePx; x += metrics.tilePx * 1.6) {
+    context.beginPath();
+    context.moveTo(x + dustOffset, 0);
+    context.lineTo(x - (dustOffset * 0.3), metrics.canvas.height);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawMiningWallTile(context, metrics, tileX, tileY, tile, now) {
+  const rect = getMiningTileScreenRect(metrics, tileX, tileY);
+  if (!rect) return;
+  const colors = getMiningOrePalette(tile.oreId);
+  const damageRatio = tile.maxHp > 0 ? 1 - (tile.hp / tile.maxHp) : 0;
+  const wobble = getMiningEffectStrength(metrics, tileX, tileY, "mine-hit", now) * 0.08;
+
+  context.save();
+  context.translate(rect.centerX, rect.centerY);
+  context.scale(1 + wobble, 1 - (wobble * 0.6));
+
+  context.fillStyle = "rgba(0, 0, 0, 0.24)";
+  context.beginPath();
+  context.ellipse(0, rect.size * 0.18, rect.size * 0.38, rect.size * 0.18, 0, 0, Math.PI * 2);
+  context.fill();
+
+  drawMiningRockBlobPath(context, rect.size * 0.39, tileX, tileY, tile.oreId);
+  context.fillStyle = colors.base;
+  context.fill();
+  context.lineWidth = Math.max(3, rect.size * 0.05);
+  context.strokeStyle = colors.edge;
+  context.stroke();
+
+  drawMiningRockBlobPath(context, rect.size * 0.26, tileX + 7, tileY + 3, `${tile.oreId}-inner`);
+  context.fillStyle = colors.highlight;
+  context.globalAlpha = 0.65;
+  context.fill();
+  context.globalAlpha = 1;
+
+  if (damageRatio > 0.02) {
+    drawMiningCracks(context, rect.size, damageRatio, colors.crack);
+  }
+
+  context.restore();
+}
+
+function drawMiningExitTile(context, metrics, tileX, tileY, now) {
+  const rect = getMiningTileScreenRect(metrics, tileX, tileY);
+  if (!rect) return;
+  const pulse = 0.75 + (Math.sin((now / 240) + tileX + tileY) * 0.12);
+
+  context.save();
+  context.translate(rect.centerX, rect.centerY);
+  context.fillStyle = "rgba(0,0,0,0.22)";
+  context.beginPath();
+  context.ellipse(0, rect.size * 0.2, rect.size * 0.34, rect.size * 0.16, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "#ffd88f";
+  context.beginPath();
+  context.moveTo(-rect.size * 0.24, rect.size * 0.28);
+  context.lineTo(-rect.size * 0.12, -rect.size * 0.2);
+  context.lineTo(rect.size * 0.12, -rect.size * 0.2);
+  context.lineTo(rect.size * 0.24, rect.size * 0.28);
+  context.closePath();
+  context.fill();
+
+  context.fillStyle = `rgba(255, 248, 202, ${0.3 * pulse})`;
+  context.beginPath();
+  context.arc(0, -rect.size * 0.05, rect.size * 0.28 * pulse, 0, Math.PI * 2);
+  context.fill();
+
+  context.strokeStyle = "rgba(255, 253, 240, 0.92)";
+  context.lineWidth = Math.max(3, rect.size * 0.05);
+  context.stroke();
+  context.restore();
+}
+
+function drawMiningRockBlobPath(context, radius, tileX, tileY, salt) {
+  const points = 9;
+  context.beginPath();
+  for (let index = 0; index <= points; index += 1) {
+    const angle = (Math.PI * 2 * index) / points;
+    const variance = 0.82 + (hashMiningNoise(tileX, tileY, `${salt}:${index}`) * 0.34);
+    const px = Math.cos(angle) * radius * variance;
+    const py = Math.sin(angle) * radius * (0.84 + (hashMiningNoise(tileX, tileY, `${salt}:y:${index}`) * 0.28));
+    if (index === 0) context.moveTo(px, py);
+    else context.lineTo(px, py);
+  }
+  context.closePath();
+}
+
+function drawMiningCracks(context, size, damageRatio, color) {
+  context.save();
+  context.strokeStyle = color;
+  context.lineCap = "round";
+  context.lineWidth = Math.max(2, size * 0.045);
+  context.beginPath();
+  context.moveTo(-size * 0.16, -size * 0.2);
+  context.lineTo(size * 0.02, -size * 0.02);
+  context.lineTo(-size * 0.04, size * 0.22);
+  if (damageRatio > 0.2) {
+    context.moveTo(size * 0.08, -size * 0.18);
+    context.lineTo(-size * 0.02, size * 0.02);
+    context.lineTo(size * 0.14, size * 0.24);
+  }
+  if (damageRatio > 0.45) {
+    context.moveTo(-size * 0.28, size * 0.02);
+    context.lineTo(-size * 0.05, size * 0.06);
+    context.lineTo(size * 0.18, size * 0.12);
+  }
+  if (damageRatio > 0.7) {
+    context.moveTo(size * 0.18, -size * 0.08);
+    context.lineTo(size * 0.28, size * 0.04);
+  }
+  context.stroke();
+  context.restore();
+}
+
+function drawMiningEffects(context, metrics, effects, now) {
+  for (const effect of effects || []) {
+    const age = Math.max(0, now - Number(effect.atMs || 0));
+    const progress = clamp(age / 900, 0, 1);
+    const rect = getMiningTileScreenRect(metrics, effect.x, effect.y);
+    if (!rect) continue;
+    context.save();
+    context.translate(rect.centerX, rect.centerY);
+
+    if (effect.type === "mine-hit") {
+      const radius = rect.size * (0.22 + (progress * 0.34));
+      context.strokeStyle = `rgba(255, 225, 170, ${0.45 * (1 - progress)})`;
+      context.lineWidth = Math.max(2, rect.size * 0.04);
+      context.beginPath();
+      context.arc(0, 0, radius, 0, Math.PI * 2);
+      context.stroke();
+    }
+
+    if (effect.type === "mine-break" || effect.type === "mole-break") {
+      for (let index = 0; index < 6; index += 1) {
+        const angle = ((Math.PI * 2) / 6) * index;
+        const distance = rect.size * (0.06 + (progress * 0.34));
+        const px = Math.cos(angle) * distance;
+        const py = Math.sin(angle) * distance;
+        context.fillStyle = `rgba(255, 218, 163, ${0.42 * (1 - progress)})`;
+        context.beginPath();
+        context.arc(px, py, rect.size * (0.05 + ((1 - progress) * 0.03)), 0, Math.PI * 2);
+        context.fill();
+      }
+    }
+
+    if (effect.type === "mole-hit" || effect.type === "player-hit") {
+      context.strokeStyle = effect.type === "player-hit"
+        ? `rgba(255, 128, 128, ${0.55 * (1 - progress)})`
+        : `rgba(255, 238, 180, ${0.55 * (1 - progress)})`;
+      context.lineWidth = Math.max(2, rect.size * 0.035);
+      context.beginPath();
+      context.arc(0, 0, rect.size * (0.2 + (progress * 0.28)), 0, Math.PI * 2);
+      context.stroke();
+    }
+
+    context.restore();
+  }
+}
+
+function drawMiningMoleSprite(context, metrics, mole, now) {
+  const rect = getMiningTileScreenRect(metrics, mole.x, mole.y);
+  if (!rect) return;
+  const hurtStrength = clamp(1 - ((now - Number(mole.hurtAtMs || 0)) / 220), 0, 1);
+  const attackStrength = clamp(1 - ((now - Number(mole.lastAttackAtMs || 0)) / 260), 0, 1);
+  const bob = Math.sin((now / 170) + mole.x + mole.y) * rect.size * 0.02;
+  const direction = mole.facing === "left" ? -1 : 1;
+
+  context.save();
+  context.translate(rect.centerX, rect.centerY + bob);
+  context.scale(direction, 1);
+
+  context.fillStyle = "rgba(0,0,0,0.24)";
+  context.beginPath();
+  context.ellipse(0, rect.size * 0.22, rect.size * 0.28, rect.size * 0.12, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = hurtStrength > 0 ? "#ff8b8b" : "#5d4337";
+  context.beginPath();
+  context.ellipse(0, 0, rect.size * 0.22, rect.size * 0.18, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "#7a6255";
+  context.beginPath();
+  context.ellipse(rect.size * 0.16, rect.size * 0.02, rect.size * 0.14, rect.size * 0.12, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "#e6c2ad";
+  context.beginPath();
+  context.ellipse(rect.size * 0.23, rect.size * (attackStrength ? -0.04 : 0.02), rect.size * 0.09, rect.size * 0.07, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.strokeStyle = "#2d1d18";
+  context.lineWidth = Math.max(2, rect.size * 0.03);
+  context.beginPath();
+  context.moveTo(-rect.size * 0.1, rect.size * 0.16);
+  context.lineTo(-rect.size * 0.18, rect.size * 0.26);
+  context.moveTo(rect.size * 0.02, rect.size * 0.16);
+  context.lineTo(-rect.size * 0.02, rect.size * 0.28);
+  context.stroke();
+
+  context.fillStyle = "#241819";
+  context.beginPath();
+  context.arc(rect.size * 0.22, -rect.size * 0.02, rect.size * 0.015, 0, Math.PI * 2);
+  context.fill();
+
+  context.restore();
+}
+
+function drawMiningPlayerSprite(context, metrics, entry, now) {
+  const visual = state.miningVisualPlayers[entry.id] || {
+    x: entry.x,
+    y: entry.y,
+    targetX: entry.x,
+    targetY: entry.y,
+    facing: entry.facing || "right",
+    lastAction: entry.lastAction || "",
+    lastActionAtMs: Number(entry.lastActionAtMs || 0),
+    lastActionTargetX: Number(entry.lastActionTargetX ?? entry.x),
+    lastActionTargetY: Number(entry.lastActionTargetY ?? entry.y),
+    lastHurtAtMs: Number(entry.lastHurtAtMs || 0)
+  };
+
+  const rect = getMiningTileScreenRect(metrics, visual.x, visual.y);
+  if (!rect) return;
+  const moving = Math.abs((visual.targetX ?? visual.x) - visual.x) + Math.abs((visual.targetY ?? visual.y) - visual.y) > 0.01;
+  const bob = moving ? Math.sin(now / 88) * rect.size * 0.04 : 0;
+  const hurtStrength = clamp(1 - ((now - Number(visual.lastHurtAtMs || 0)) / 260), 0, 1);
+  const swingStrength = (visual.lastAction === "mine" || visual.lastAction === "attack")
+    ? clamp(1 - ((now - Number(visual.lastActionAtMs || 0)) / 240), 0, 1)
+    : 0;
+  const facing = visual.facing || "right";
+  const direction = facing === "left" ? -1 : 1;
+
+  context.save();
+  context.translate(rect.centerX, rect.centerY + bob);
+  if (hurtStrength > 0) {
+    context.translate(direction * -rect.size * 0.04 * hurtStrength, 0);
+  }
+
+  context.fillStyle = "rgba(0,0,0,0.25)";
+  context.beginPath();
+  context.ellipse(0, rect.size * 0.24, rect.size * 0.2, rect.size * 0.1, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.save();
+  context.scale(direction, 1);
+  context.fillStyle = entry.id === state.currentUser.id ? "#55c9ff" : "#88e18c";
+  context.fillRect(-rect.size * 0.12, -rect.size * 0.02, rect.size * 0.24, rect.size * 0.24);
+  context.fillStyle = "#20334a";
+  context.fillRect(-rect.size * 0.14, rect.size * 0.18, rect.size * 0.1, rect.size * 0.16);
+  context.fillRect(rect.size * 0.04, rect.size * 0.18, rect.size * 0.1, rect.size * 0.16);
+
+  context.fillStyle = hurtStrength > 0 ? "#ffad99" : "#ffd2aa";
+  context.beginPath();
+  context.arc(0, -rect.size * 0.14, rect.size * 0.14, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "#ffcc42";
+  context.beginPath();
+  context.arc(0, -rect.size * 0.22, rect.size * 0.16, Math.PI, Math.PI * 2);
+  context.fill();
+  context.fillRect(-rect.size * 0.16, -rect.size * 0.22, rect.size * 0.32, rect.size * 0.06);
+
+  context.fillStyle = "#5d3d27";
+  context.fillRect(-rect.size * 0.16, -rect.size * 0.02, rect.size * 0.06, rect.size * 0.18);
+  context.fillRect(rect.size * 0.1, -rect.size * 0.02, rect.size * 0.06, rect.size * 0.18);
+  drawMiningPickaxe(context, rect.size * 0.17, -rect.size * 0.02, rect.size * 0.62, facing, swingStrength);
+  context.restore();
+  context.restore();
+  drawMiningPlayerName(context, rect, entry.name, entry.id === state.currentUser.id);
+}
+
+function drawMiningPlayerName(context, rect, name, isLocal) {
+  const label = String(name || "Oyuncu");
+  context.save();
+  context.font = `900 ${Math.max(14, rect.size * 0.22)}px Trebuchet MS`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const textWidth = context.measureText(label).width;
+  const pillWidth = textWidth + (rect.size * 0.46);
+  const pillHeight = rect.size * 0.34;
+  const pillX = rect.centerX - (pillWidth / 2);
+  const pillY = rect.y - (rect.size * 0.56);
+  context.fillStyle = isLocal ? "rgba(16, 45, 74, 0.88)" : "rgba(22, 28, 36, 0.76)";
+  context.beginPath();
+  context.roundRect(pillX, pillY, pillWidth, pillHeight, pillHeight / 2);
+  context.fill();
+  context.strokeStyle = isLocal ? "rgba(120, 224, 255, 0.45)" : "rgba(255, 255, 255, 0.16)";
+  context.lineWidth = Math.max(1.5, rect.size * 0.022);
+  context.stroke();
+  context.fillStyle = "#f7fbff";
+  context.strokeStyle = "rgba(0, 0, 0, 0.28)";
+  context.lineWidth = Math.max(1.25, rect.size * 0.018);
+  context.strokeText(label, rect.centerX, pillY + (pillHeight / 2));
+  context.fillText(label, rect.centerX, pillY + (pillHeight / 2));
+  context.restore();
+}
+
+function getMiningEffectStrength(metrics, tileX, tileY, type, now) {
+  const effect = (state.miningSession?.content?.effects || []).find((entry) => entry.type === type && entry.x === tileX && entry.y === tileY);
+  if (!effect) return 0;
+  return clamp(1 - ((now - Number(effect.atMs || 0)) / 220), 0, 1);
+}
+
+function getMiningOrePalette(oreId) {
+  const palettes = {
+    stone: { base: "#8e8378", edge: "#554942", highlight: "#bfb2a3", crack: "rgba(252, 246, 236, 0.72)" },
+    coal: { base: "#53565f", edge: "#272932", highlight: "#81838e", crack: "rgba(229, 234, 244, 0.72)" },
+    copper: { base: "#b16b44", edge: "#683a25", highlight: "#d9976c", crack: "rgba(255, 231, 206, 0.74)" },
+    iron: { base: "#9aa4b3", edge: "#5e6776", highlight: "#c8d1de", crack: "rgba(255, 255, 255, 0.78)" },
+    amber: { base: "#cb8b2e", edge: "#774d12", highlight: "#f5bf58", crack: "rgba(255, 239, 176, 0.76)" },
+    sapphire: { base: "#5384ff", edge: "#2542a0", highlight: "#87afff", crack: "rgba(223, 239, 255, 0.76)" },
+    ruby: { base: "#d35d73", edge: "#7f2638", highlight: "#f39baa", crack: "rgba(255, 229, 236, 0.78)" },
+    starsteel: { base: "#6ee6ea", edge: "#1b8f98", highlight: "#b7fcff", crack: "rgba(233, 255, 255, 0.82)" }
+  };
+  return palettes[oreId] || palettes.stone;
+}
+
+function hashMiningNoise(x, y, salt = "") {
+  let hash = 2166136261;
+  const input = `${x}:${y}:${salt}`;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 1000) / 1000;
 }
 
 function getMiningSlotLabel(slot) {
@@ -4295,6 +4809,23 @@ function loadPreferredMineCount() {
 function savePreferredMineCount(value) {
   try {
     window.localStorage.setItem(LOCAL_MINES_MINE_COUNT_KEY, String(value));
+  } catch {
+    // Local preferences are best-effort.
+  }
+}
+
+function loadMiningZoomPreference() {
+  try {
+    const value = Number(window.localStorage.getItem(LOCAL_MINING_ZOOM_KEY) || MINING_DEFAULT_ZOOM);
+    return Number.isFinite(value) ? clamp(value, MINING_MIN_ZOOM, MINING_MAX_ZOOM) : MINING_DEFAULT_ZOOM;
+  } catch {
+    return MINING_DEFAULT_ZOOM;
+  }
+}
+
+function saveMiningZoomPreference() {
+  try {
+    window.localStorage.setItem(LOCAL_MINING_ZOOM_KEY, String(clamp(state.miningZoom, MINING_MIN_ZOOM, MINING_MAX_ZOOM)));
   } catch {
     // Local preferences are best-effort.
   }

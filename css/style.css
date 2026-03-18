@@ -1153,9 +1153,9 @@ svg { display: block; }
   padding: 14px;
   overflow: hidden;
   background:
-    radial-gradient(circle at top left, rgba(113, 244, 255, 0.16), transparent 28%),
-    radial-gradient(circle at top right, rgba(255, 202, 99, 0.2), transparent 24%),
-    linear-gradient(180deg, #103259 0%, #0b213d 58%, #0d1830 100%);
+    radial-gradient(circle at top left, rgba(255, 209, 115, 0.18), transparent 26%),
+    radial-gradient(circle at top right, rgba(255, 120, 84, 0.18), transparent 24%),
+    linear-gradient(180deg, #362116 0%, #24151a 58%, #17111a 100%);
 }
 .mining-shell {
   width: min(1520px, 100%);
@@ -1402,9 +1402,9 @@ svg { display: block; }
   padding: 10px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 14% 18%, rgba(117, 250, 255, 0.16), transparent 18%),
-    radial-gradient(circle at 84% 16%, rgba(255, 202, 99, 0.2), transparent 16%),
-    linear-gradient(180deg, rgba(10, 27, 53, 0.97), rgba(8, 19, 39, 0.99));
+    radial-gradient(circle at 14% 18%, rgba(255, 208, 127, 0.16), transparent 18%),
+    radial-gradient(circle at 84% 16%, rgba(255, 112, 83, 0.16), transparent 16%),
+    linear-gradient(180deg, rgba(48, 29, 22, 0.97), rgba(24, 17, 21, 0.99));
 }
 .mining-stage-overlay {
   position: absolute;
@@ -1435,18 +1435,23 @@ svg { display: block; }
   max-width: none;
 }
 .mining-stage-brand {
-  color: #fafdff;
+  color: #fff7e2;
   font-size: 30px;
   font-weight: 900;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  text-shadow: 0 8px 22px rgba(5, 15, 32, 0.32);
+  text-shadow: 0 8px 22px rgba(23, 10, 8, 0.32);
 }
 .mining-stage-subtitle {
   max-width: 380px;
-  color: rgba(237, 246, 255, 0.78);
+  color: rgba(255, 240, 221, 0.8);
   font-size: 13px;
   line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(34, 22, 21, 0.56);
+  border: 1px solid rgba(255, 214, 177, 0.16);
+  backdrop-filter: blur(12px);
 }
 .mining-stage-hud {
   display: flex;
@@ -1475,22 +1480,37 @@ svg { display: block; }
 }
 .mining-canvas {
   display: block;
-  width: min(100%, calc(100vh - 24px));
-  height: auto;
-  aspect-ratio: 1 / 1;
-  max-width: 100%;
-  max-height: calc(100vh - 22px);
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  max-width: none;
+  max-height: none;
   margin: auto;
-  border-radius: 30px;
+  border-radius: 24px;
   background:
-    linear-gradient(180deg, rgba(18, 50, 82, 0.96), rgba(11, 28, 55, 0.98));
-  border: 2px solid rgba(195, 236, 255, 0.22);
+    linear-gradient(180deg, rgba(62, 40, 31, 0.96), rgba(25, 17, 21, 0.98));
+  border: 2px solid rgba(255, 225, 184, 0.18);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 28px 60px rgba(0, 0, 0, 0.28);
   touch-action: none;
-  cursor: crosshair;
-  image-rendering: pixelated;
+  cursor: pointer;
+}
+.mining-stage-overlay-left .mining-roster,
+.mining-stage-overlay-right .mining-stage-hud,
+.mining-stage-overlay-bottom .mining-stage-legend,
+.mining-stage-overlay-bottom .mining-summary-chip {
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: rgba(26, 17, 18, 0.54);
+  border: 1px solid rgba(255, 215, 170, 0.14);
+  backdrop-filter: blur(12px);
+}
+.mining-stage-overlay-right .mining-stage-hud {
+  justify-content: flex-end;
+}
+.mining-stage-overlay-bottom .mining-stage-legend {
+  background: rgba(26, 17, 18, 0.42);
 }
 .mining-stage-overlay .mining-join-action {
   pointer-events: auto;
@@ -2359,8 +2379,9 @@ svg { display: block; }
     padding: 8px;
   }
   .app.is-casino-view .mining-canvas {
-    width: min(100%, calc(100vh - 24px));
-    max-height: calc(100vh - 24px);
+    width: 100%;
+    height: 100%;
+    max-height: none;
   }
 }
 
