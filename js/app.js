@@ -83,7 +83,7 @@ const DRAGON_SPEED_STAGES = [
   { multiplier: 5, speed: 1.5 }
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
-const MINING_ACTION_TICK_MS = 170;
+const MINING_ACTION_TICK_MS = 55;
 const MINING_MIN_ZOOM = 1;
 const MINING_MAX_ZOOM = 1.8;
 const MINING_DEFAULT_ZOOM = 1.3;
@@ -2845,7 +2845,7 @@ function startMiningSessionSync() {
     if (state.miningRealtimeReady && !isCasinoMiningView()) return;
     if (!state.miningSession && !isCasinoMiningView()) return;
     void loadMiningState();
-  }, state.miningRealtimeReady ? 2500 : 500);
+  }, isCasinoMiningView() ? 140 : (state.miningRealtimeReady ? 2500 : 500));
 }
 
 function stopMiningSessionSync() {
@@ -2929,14 +2929,30 @@ function syncMiningVisualState(session, now = getMiningNow()) {
   const nextVisuals = {};
   for (const player of session.players || []) {
     const previous = previousVisuals[player.id] || null;
-    const teleported = previous && (Math.abs((previous.targetX ?? previous.x) - player.x) + Math.abs((previous.targetY ?? previous.y) - player.y) > 2);
+    const teleported = previous && (Math.abs((previous.serverX ?? previous.targetX ?? previous.x) - player.x) + Math.abs((previous.serverY ?? previous.targetY ?? previous.y) - player.y) > 2);
+    const previousServerX = Number(previous?.serverX ?? previous?.targetX ?? previous?.x ?? player.x);
+    const previousServerY = Number(previous?.serverY ?? previous?.targetY ?? previous?.y ?? player.y);
+    const movedThisSnapshot = Boolean(
+      previous
+      && !teleported
+      && player.lastAction === "move"
+      && (player.x !== previousServerX || player.y !== previousServerY)
+    );
+    const moveFromX = movedThisSnapshot ? previousServerX : Number(player.x);
+    const moveFromY = movedThisSnapshot ? previousServerY : Number(player.y);
     nextVisuals[player.id] = {
       id: player.id,
       name: player.name,
-      x: !previous || teleported || player.status !== "active" ? player.x : previous.x,
-      y: !previous || teleported || player.status !== "active" ? player.y : previous.y,
+      x: !previous || teleported || player.status !== "active" ? moveFromX : previous.x,
+      y: !previous || teleported || player.status !== "active" ? moveFromY : previous.y,
       targetX: player.x,
       targetY: player.y,
+      serverX: player.x,
+      serverY: player.y,
+      moveFromX,
+      moveFromY,
+      moveStartAtMs: movedThisSnapshot ? Number(player.lastActionAtMs || 0) : 0,
+      moveEndAtMs: movedThisSnapshot ? Number(player.nextActionAtMs || 0) : 0,
       status: player.status,
       facing: player.facing || previous?.facing || "right",
       integrity: Number(player.integrity || 0),
@@ -3002,13 +3018,23 @@ function tickMiningCanvasFrame(frameAtMs) {
 }
 
 function advanceMiningVisualState(deltaMs) {
-  const blend = 1 - Math.exp(-deltaMs / 62);
+  const blend = 1 - Math.exp(-deltaMs / 42);
+  const now = getMiningNow();
   for (const entry of Object.values(state.miningVisualPlayers || {})) {
     if (!entry) continue;
-    entry.x += (entry.targetX - entry.x) * blend;
-    entry.y += (entry.targetY - entry.y) * blend;
-    if (Math.abs(entry.targetX - entry.x) < 0.0015) entry.x = entry.targetX;
-    if (Math.abs(entry.targetY - entry.y) < 0.0015) entry.y = entry.targetY;
+    let desiredX = Number(entry.serverX ?? entry.targetX ?? entry.x);
+    let desiredY = Number(entry.serverY ?? entry.targetY ?? entry.y);
+    if (entry.lastAction === "move" && entry.moveEndAtMs > entry.moveStartAtMs && now < entry.moveEndAtMs) {
+      const progress = clamp((now - entry.moveStartAtMs) / Math.max(1, entry.moveEndAtMs - entry.moveStartAtMs), 0, 1);
+      desiredX = entry.moveFromX + ((entry.serverX - entry.moveFromX) * progress);
+      desiredY = entry.moveFromY + ((entry.serverY - entry.moveFromY) * progress);
+    }
+    entry.targetX = desiredX;
+    entry.targetY = desiredY;
+    entry.x += (desiredX - entry.x) * blend;
+    entry.y += (desiredY - entry.y) * blend;
+    if (Math.abs(desiredX - entry.x) < 0.0015) entry.x = desiredX;
+    if (Math.abs(desiredY - entry.y) < 0.0015) entry.y = desiredY;
   }
 
   const localVisual = state.miningVisualPlayers[state.currentUser.id] || null;
