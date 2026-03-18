@@ -10,7 +10,7 @@ globalThis.__miningBlobFallbackStore ||= { sessions: {}, profiles: {} };
 let supabaseClient;
 
 function hasBlobConfig() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return process.env.MINING_USE_BLOB === "1" && Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 
 function hasSupabaseConfig() {
