@@ -53,6 +53,7 @@ export function attachRealtimeServer(server, options = {}) {
   }
 
   const allowedOrigins = normalizeOriginList(options.allowedOrigins);
+  const allowOrigin = typeof options.allowOrigin === "function" ? options.allowOrigin : null;
   const providers = getRealtimeProviders();
   const clients = new Set();
   const wss = new WebSocketServer({ noServer: true });
@@ -116,7 +117,10 @@ export function attachRealtimeServer(server, options = {}) {
     }
 
     const origin = String(request.headers.origin || "").trim();
-    if (origin && allowedOrigins.length && !allowedOrigins.includes(origin)) {
+    const originAllowed = allowOrigin
+      ? allowOrigin(origin)
+      : (!origin || !allowedOrigins.length || allowedOrigins.includes(origin));
+    if (!originAllowed) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;

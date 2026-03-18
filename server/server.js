@@ -14,9 +14,23 @@ const allowedOrigins = String(process.env.CORS_ORIGIN || "https://31check-2-0.ve
   .map((entry) => entry.trim())
   .filter(Boolean);
 
+function isTrustedOrigin(origin) {
+  const normalized = String(origin || "").trim();
+  if (!normalized) return true;
+  if (normalized === "null") return true;
+  if (allowedOrigins.includes(normalized)) return true;
+  if (/^https:\/\/31check-2-0(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(normalized)) return true;
+  if (/^https:\/\/46-62-159-126\.sslip\.io$/i.test(normalized)) return true;
+  if (/^https:\/\/([a-z0-9-]+\.)*discord\.com$/i.test(normalized)) return true;
+  if (/^https:\/\/([a-z0-9-]+\.)*discordapp\.com$/i.test(normalized)) return true;
+  if (/^https:\/\/[a-z0-9.-]+\.discordsays\.com$/i.test(normalized)) return true;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized)) return true;
+  return false;
+}
+
 app.use((req, res, next) => {
   const origin = String(req.headers.origin || "");
-  if (origin && allowedOrigins.includes(origin)) {
+  if (origin && isTrustedOrigin(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }
@@ -138,7 +152,10 @@ const server = createServer(app);
 
 registerRealtimeProvider("dragon", async ({ scopeKey }) => getDragonTransportPayload(scopeKey));
 registerRealtimeProvider("mining", async ({ scopeKey, actor }) => getMiningTransportPayload(scopeKey, actor));
-attachRealtimeServer(server, { allowedOrigins });
+attachRealtimeServer(server, {
+  allowedOrigins,
+  allowOrigin: isTrustedOrigin
+});
 
 server.listen(port, () => {
   console.log(`Discord Activity backend listening on http://localhost:${port}`);
