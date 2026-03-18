@@ -5,7 +5,13 @@ const { Pool } = pg;
 globalThis.__activityDbPool ||= null;
 
 function getDatabaseUrl() {
-  return String(process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || "").trim();
+  return String(
+    process.env.DATABASE_URL
+    || process.env.POSTGRES_URL
+    || process.env.LOCAL_DATABASE_URL
+    || process.env.NEON_DATABASE_URL
+    || ""
+  ).trim();
 }
 
 function normalizeDatabaseUrl(input) {

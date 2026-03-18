@@ -534,7 +534,7 @@ async function authenticateWithDiscord() {
     scope: ["identify", "guilds", "guilds.members.read"]
   });
 
-  const response = await fetch("/api/token", {
+  const response = await fetch(buildBackendApiUrl("/api/token"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code })
@@ -665,7 +665,10 @@ async function loadPersistedMessages({ initial = false } = {}) {
   const requestEpoch = state.remoteSyncEpoch;
 
   try {
-    const response = await fetch(`/api/messages?scopeKey=${encodeURIComponent(state.scopeKey)}&ts=${Date.now()}`, {
+    const response = await fetch(buildBackendApiUrl("/api/messages", {
+      scopeKey: state.scopeKey,
+      ts: Date.now()
+    }), {
       cache: "no-store"
     });
     if (!response.ok) return;
@@ -1513,7 +1516,7 @@ async function persistMessage(message) {
   if (!channel) return;
 
   try {
-    const response = await fetch("/api/messages", {
+    const response = await fetch(buildBackendApiUrl("/api/messages"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scopeKey: state.scopeKey, channelId: channel.id, message })
@@ -1531,7 +1534,7 @@ async function persistMessage(message) {
 
 async function persistMessageUpdate(message) {
   try {
-    const response = await fetch("/api/messages", {
+    const response = await fetch(buildBackendApiUrl("/api/messages"), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2321,7 +2324,7 @@ async function handleDragonJoin(messageId) {
 }
 
 async function performDragonAction(messageId, actionType) {
-  const response = await fetch("/api/messages", {
+  const response = await fetch(buildBackendApiUrl("/api/messages"), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2473,6 +2476,10 @@ function hasDirectRealtimeBackend() {
 }
 
 function buildGameApiUrl(path, query = {}) {
+  return buildBackendApiUrl(path, query);
+}
+
+function buildBackendApiUrl(path, query = {}) {
   const url = new URL(path, `${getGameBackendOrigin()}/`);
   for (const [key, value] of Object.entries(query || {})) {
     if (value === undefined || value === null || value === "") continue;
