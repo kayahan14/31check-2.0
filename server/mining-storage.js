@@ -43,7 +43,8 @@ async function fetchBlobJson(pathname) {
     };
   } catch (error) {
     const message = String(error?.message || "");
-    if (message.toLowerCase().includes("not found")) {
+    const normalized = message.toLowerCase();
+    if (normalized.includes("not found") || normalized.includes("does not exist")) {
       return null;
     }
     throw error;
