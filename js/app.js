@@ -174,11 +174,11 @@ const state = {
   userModalView: "categories",
   userGameConfigView: "dragon",
   currentUser: {
-    id: MOCK_USER_ID,
-    username: MOCK_USER_NAME,
-    displayName: MOCK_USER_NAME,
-    tag: `@${MOCK_USER_NAME}`,
-    discriminator: "0001",
+    id: MOCK_MODE ? MOCK_USER_ID : "",
+    username: MOCK_MODE ? MOCK_USER_NAME : "discord",
+    displayName: MOCK_MODE ? MOCK_USER_NAME : "Discord",
+    tag: MOCK_MODE ? `@${MOCK_USER_NAME}` : "@discord",
+    discriminator: MOCK_MODE ? "0001" : "0000",
     avatarUrl: "",
     guildId: "",
     isAdmin: MOCK_MODE
@@ -457,16 +457,18 @@ async function initializeRuntime() {
     render();
     await state.discordSdk.ready();
 
-    state.runtimeNote = "Discord kimlik dogrulamasi basliyor...";
+    state.runtimeNote = "Discord kullanicisi aliniyor...";
     render();
-    const auth = await authenticateWithDiscord();
-    hydrateCurrentUser(auth);
+    const auth = await resolveDiscordIdentity();
+    if (auth?.user) {
+      hydrateCurrentUser(auth);
+    }
 
     state.scopeKey = buildScopeKey();
     state.runtimeMode = "discord";
     state.runtimeNote = "Discord Activity bağlı";
 
-    await subscribeDiscordEvents(auth);
+    await subscribeDiscordEvents();
     await hydrateGuildMember(auth);
     await hydrateParticipants();
     const messageTask = loadPersistedMessages({ initial: true });
@@ -536,21 +538,32 @@ async function authenticateWithDiscord() {
   try {
     state.runtimeNote = "Discord izin penceresi aciliyor...";
     render();
-    const { code } = await state.discordSdk.commands.authorize({
-      client_id: DISCORD_CLIENT_ID,
-      response_type: "code",
-      state: `31check-activity-${Date.now()}`,
-      prompt: "none",
-      scope: ["identify"]
-    });
+    let code = "";
+    try {
+      const result = await state.discordSdk.commands.authorize({
+        client_id: DISCORD_CLIENT_ID,
+        response_type: "code",
+        state: `31check-activity-${Date.now()}`,
+        prompt: "none",
+        scope: ["identify"]
+      });
+      code = result?.code || "";
+    } catch (error) {
+      throw new Error(`authorize: ${String(error?.message || error || "basarisiz")}`);
+    }
 
     state.runtimeNote = "Discord token aliniyor...";
     render();
-    const response = await fetch(buildFrontendApiUrl("/api/token"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code })
-    });
+    let response;
+    try {
+      response = await fetch(buildFrontendApiUrl("/api/token"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code })
+      });
+    } catch (error) {
+      throw new Error(`token-fetch: ${String(error?.message || error || "basarisiz")}`);
+    }
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
@@ -560,7 +573,12 @@ async function authenticateWithDiscord() {
     const token = await response.json();
     state.runtimeNote = "Discord oturumu dogrulaniyor...";
     render();
-    const auth = await state.discordSdk.commands.authenticate({ access_token: token.access_token });
+    let auth;
+    try {
+      auth = await state.discordSdk.commands.authenticate({ access_token: token.access_token });
+    } catch (error) {
+      throw new Error(`sdk-authenticate: ${String(error?.message || error || "basarisiz")}`);
+    }
     return { ...auth, access_token: token.access_token };
   } catch (error) {
     oauthError = error;
@@ -579,6 +597,56 @@ async function authenticateWithDiscord() {
       `OAuth: ${oauthMessage || "basarisiz"} | SDK: ${fallbackMessage || "basarisiz"}`
     );
   }
+}
+
+async function resolveDiscordIdentity() {
+  const currentUser = await waitForDiscordCurrentUser(2000);
+  if (currentUser?.id) {
+    return { user: currentUser, access_token: "" };
+  }
+
+  try {
+    return await authenticateWithDiscord();
+  } catch (error) {
+    console.warn("Discord OAuth auth failed, continuing with SDK identity only.", error);
+    const fallbackUser = await waitForDiscordCurrentUser(1000);
+    if (fallbackUser?.id) {
+      return { user: fallbackUser, access_token: "" };
+    }
+
+    return { user: null, access_token: "" };
+  }
+}
+
+async function waitForDiscordCurrentUser(timeoutMs = 2000) {
+  if (!state.discordSdk || MOCK_MODE) return null;
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    let timeoutHandle = 0;
+
+    const finish = (user) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle) {
+        window.clearTimeout(timeoutHandle);
+      }
+      resolve(user || null);
+    };
+
+    const handleUser = (user) => {
+      if (user?.id) {
+        finish(user);
+      }
+    };
+
+    timeoutHandle = window.setTimeout(() => finish(null), timeoutMs);
+
+    state.discordSdk.subscribe(Events.CURRENT_USER_UPDATE, handleUser).catch((error) => {
+      console.warn("Could not subscribe to current user updates during bootstrap.", error);
+      finish(null);
+    });
+  });
 }
 
 function hydrateCurrentUser(auth) {
@@ -600,12 +668,23 @@ function hydrateCurrentUser(auth) {
   syncUserTag();
 }
 
-async function subscribeDiscordEvents(auth) {
+async function subscribeDiscordEvents() {
   if (!state.discordSdk) return;
 
   try {
+    await state.discordSdk.subscribe(Events.CURRENT_USER_UPDATE, (user) => {
+      if (!user?.id) return;
+      hydrateCurrentUser({ user, access_token: "" });
+      render();
+      renderUserModal();
+    });
+  } catch (error) {
+    console.warn("Could not subscribe to current user updates.", error);
+  }
+
+  try {
     await state.discordSdk.subscribe(Events.CURRENT_GUILD_MEMBER_UPDATE, (member) => {
-      applyGuildMemberData(member, auth?.user?.id || state.currentUser.id);
+      applyGuildMemberData(member, state.currentUser.id);
       render();
       renderUserModal();
     });
@@ -2517,6 +2596,10 @@ function getFrontendApiOrigin() {
   return "https://31check-2-0.vercel.app";
 }
 
+function isDiscordProxyHost(hostname = window.location.hostname) {
+  return /\.discordsays\.com$/i.test(hostname) || /\.discordsez\.com$/i.test(hostname);
+}
+
 function hasDirectRealtimeBackend() {
   if (GAME_BACKEND_URL) return true;
   const { hostname, port } = window.location;
@@ -2532,10 +2615,15 @@ function hasDirectRealtimeBackend() {
   }
 
   function buildFrontendApiUrl(path, query = {}) {
-    const url = new URL(path, `${getFrontendApiOrigin()}/`);
+    const normalizedPath = String(path || "").startsWith("/") ? String(path) : `/${String(path || "")}`;
+    const relativePath = isDiscordProxyHost() ? `/.proxy${normalizedPath}` : normalizedPath;
+    const url = new URL(relativePath, `${getFrontendApiOrigin()}/`);
     for (const [key, value] of Object.entries(query || {})) {
       if (value === undefined || value === null || value === "") continue;
       url.searchParams.set(key, String(value));
+    }
+    if (isDiscordProxyHost() || (!FRONTEND_API_ORIGIN && window.location.origin === getFrontendApiOrigin())) {
+      return `${url.pathname}${url.search}`;
     }
     return url.toString();
   }
