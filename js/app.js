@@ -212,7 +212,22 @@ window.__31checkDebug = {
     session: state.miningSession,
     profile: state.miningProfile,
     serverNowMs: getMiningNow()
-  })
+  }),
+  getMiningClientState: () => cloneData({
+    queuedDirections: state.miningQueuedDirections,
+    queuedInteraction: state.miningQueuedInteraction,
+    targetTile: state.miningTargetTile,
+    bufferedInput: state.miningBufferedInput,
+    miningLocked: Boolean(state.interactiveActionLocks["mining"])
+  }),
+  clickMiningTile: async (x, y) => {
+    const targetX = Math.round(Number(x));
+    const targetY = Math.round(Number(y));
+    clearMiningQueuedActions();
+    state.miningTargetTile = { x: targetX, y: targetY };
+    await dispatchMiningCanvasIntent({ targetX, targetY, forceReplan: true });
+    return cloneData(window.__31checkDebug.getMiningClientState());
+  }
 };
 const userModalTag = document.getElementById("userModalTag");
 const adminBadge = document.getElementById("adminBadge");
