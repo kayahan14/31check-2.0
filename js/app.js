@@ -1222,6 +1222,7 @@ function bindRuntimeUi() {
   const miningCanvas = document.getElementById("miningCanvas");
   if (miningCanvas instanceof HTMLCanvasElement) {
     miningCanvas.addEventListener("pointerdown", handleMiningCanvasClick);
+    miningCanvas.addEventListener("pointermove", handleMiningCanvasHover);
     miningCanvas.addEventListener("wheel", handleMiningCanvasWheel, { passive: false });
     startMiningCanvasLoop();
     renderMiningCanvas(miningCanvas);
@@ -3440,7 +3441,7 @@ function handleMiningCanvasClick(event) {
   const tileX = Math.floor(worldX);
   const tileY = Math.floor(worldY);
 
-  state.miningTargetTile = { x: tileX, y: tileY };
+  state.miningTargetTile = { x: worldX, y: worldY };
   requestMiningCanvasFrame();
 
   const tile = getMiningTile(session.map, tileX, tileY);
@@ -3457,7 +3458,7 @@ function handleMiningCanvasClick(event) {
       void performMiningAction("attack", { targetId: mole.id });
     } else {
       state.miningAutoAction = { type: "attack", targetId: mole.id, tileX, tileY };
-      void performMiningAction("move", { targetX: tileCenterX, targetY: tileCenterY });
+      void performMiningAction("move", { targetX: worldX, targetY: worldY });
     }
     return;
   }
@@ -3466,13 +3467,8 @@ function handleMiningCanvasClick(event) {
     if (distToTile <= 1.4) {
       void performMiningAction("mine", { x: tileX, y: tileY });
     } else {
-      const approachX = player.x < tileCenterX ? tileCenterX - 1.0 : tileCenterX + 1.0;
-      const approachY = player.y < tileCenterY ? tileCenterY - 1.0 : tileCenterY + 1.0;
-      const adjTile = getMiningTile(session.map, Math.floor(approachX), Math.floor(approachY));
-      const moveToX = adjTile && (adjTile.kind === "floor" || adjTile.kind === "exit") ? approachX : tileCenterX;
-      const moveToY = adjTile && (adjTile.kind === "floor" || adjTile.kind === "exit") ? approachY : tileCenterY;
       state.miningAutoAction = { type: "mine", x: tileX, y: tileY };
-      void performMiningAction("move", { targetX: moveToX, targetY: moveToY });
+      void performMiningAction("move", { targetX: worldX, targetY: worldY });
     }
     return;
   }
@@ -3481,6 +3477,30 @@ function handleMiningCanvasClick(event) {
     state.miningAutoAction = null;
     void performMiningAction("move", { targetX: worldX, targetY: worldY });
   }
+}
+
+function handleMiningCanvasHover(event) {
+  const canvas = event.currentTarget;
+  if (!(canvas instanceof HTMLCanvasElement)) return;
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!session || !player || player.status !== "active" || !session.map) {
+    canvas.style.cursor = "default";
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / Math.max(1, rect.width);
+  const scaleY = canvas.height / Math.max(1, rect.height);
+  const localX = (event.clientX - rect.left) * scaleX;
+  const localY = (event.clientY - rect.top) * scaleY;
+  const metrics = getMiningCanvasMetrics(canvas, session, player);
+  const worldX = metrics.worldStartX + (localX / metrics.tilePx);
+  const worldY = metrics.worldStartY + (localY / metrics.tilePx);
+  const tileX = Math.floor(worldX);
+  const tileY = Math.floor(worldY);
+  const tile = getMiningTile(session.map, tileX, tileY);
+  const mole = (session.moles || []).find((m) => m.x === tileX && m.y === tileY);
+  canvas.style.cursor = (tile && (tile.kind === "wall" || tile.kind === "exit")) || mole ? "pointer" : "default";
 }
 
 function handleMiningCanvasWheel(event) {

@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg-main: #36393f;
   --bg-sidebar: #2f3136;
   --bg-footer: #292b2f;
@@ -1494,7 +1494,7 @@ svg { display: block; }
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 28px 60px rgba(0, 0, 0, 0.28);
   touch-action: none;
-  cursor: pointer;
+  cursor: default;
 }
 .mining-stage-overlay-left .mining-roster,
 .mining-stage-overlay-right .mining-stage-hud,
