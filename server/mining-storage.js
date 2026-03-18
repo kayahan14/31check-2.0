@@ -5,6 +5,8 @@ const SESSION_PATH = "session.json";
 const MINING_CHANNEL_ID = "casino:mining";
 const SESSION_TYPE = "mining_session";
 const PROFILE_TYPE = "mining_profile";
+const MINING_SESSION_TABLE = "mining_sessions";
+const MINING_PROFILE_TABLE = "mining_profiles";
 
 globalThis.__miningBlobFallbackStore ||= { sessions: {}, profiles: {} };
 let supabaseClient;
@@ -166,6 +168,76 @@ async function getSupabaseRecord(scopeKey, id) {
   };
 }
 
+async function getMiningTableSessionRecord(scopeKey) {
+  if (!hasSupabaseConfig()) return null;
+  const client = getSupabaseClient();
+  const { data, error } = await client
+    .from(MINING_SESSION_TABLE)
+    .select("scope_key,record")
+    .eq("scope_key", scopeKey)
+    .maybeSingle();
+
+  if (error) {
+    if (String(error.code || "") === "42P01") return null;
+    throw error;
+  }
+  return normalizeStoredRecord(data?.record || null);
+}
+
+async function upsertMiningTableSessionRecord(scopeKey, record) {
+  if (!hasSupabaseConfig()) return normalizeStoredRecord(record);
+  const client = getSupabaseClient();
+  const normalized = normalizeStoredRecord(record);
+  const { error } = await client
+    .from(MINING_SESSION_TABLE)
+    .upsert({
+      scope_key: scopeKey,
+      record: normalized
+    }, { onConflict: "scope_key" });
+
+  if (error) {
+    if (String(error.code || "") === "42P01") return null;
+    throw error;
+  }
+  return normalized;
+}
+
+async function getMiningTableProfileRecord(scopeKey, userId) {
+  if (!hasSupabaseConfig()) return null;
+  const client = getSupabaseClient();
+  const { data, error } = await client
+    .from(MINING_PROFILE_TABLE)
+    .select("scope_key,user_id,record")
+    .eq("scope_key", scopeKey)
+    .eq("user_id", String(userId || ""))
+    .maybeSingle();
+
+  if (error) {
+    if (String(error.code || "") === "42P01") return null;
+    throw error;
+  }
+  return normalizeStoredRecord(data?.record || null);
+}
+
+async function upsertMiningTableProfileRecord(scopeKey, userId, record) {
+  if (!hasSupabaseConfig()) return normalizeStoredRecord(record);
+  const client = getSupabaseClient();
+  const normalized = normalizeStoredRecord(record);
+  const { error } = await client
+    .from(MINING_PROFILE_TABLE)
+    .upsert({
+      scope_key: scopeKey,
+      user_id: String(userId || ""),
+      record: normalized
+    }, { onConflict: "scope_key,user_id" });
+
+  if (error) {
+    if (String(error.code || "") === "42P01") return null;
+    throw error;
+  }
+  return normalized;
+}
+
 async function upsertSupabaseRecord(scopeKey, record) {
   if (!hasSupabaseConfig()) {
     return normalizeStoredRecord(record);
@@ -196,6 +268,8 @@ async function upsertSupabaseRecord(scopeKey, record) {
 }
 
 export async function getMiningSessionRecord(scopeKey) {
+  const tableRecord = await getMiningTableSessionRecord(scopeKey);
+  if (tableRecord) return tableRecord;
   const blobRecord = await fetchBlobJson(sessionPath(scopeKey));
   if (blobRecord?.payload) return normalizeStoredRecord(blobRecord.payload);
   return getSupabaseRecord(scopeKey, sessionRecordId(scopeKey));
@@ -208,12 +282,16 @@ export async function saveMiningSessionRecord(scopeKey, sessionRecord) {
     channelId: MINING_CHANNEL_ID,
     type: SESSION_TYPE
   });
+  const tableRecord = await upsertMiningTableSessionRecord(scopeKey, normalized);
+  if (tableRecord) return tableRecord;
   const wroteBlob = await writeBlobJson(sessionPath(scopeKey), normalized);
   if (wroteBlob) return normalized;
   return upsertSupabaseRecord(scopeKey, normalized);
 }
 
 export async function getMiningProfileRecord(scopeKey, userId) {
+  const tableRecord = await getMiningTableProfileRecord(scopeKey, userId);
+  if (tableRecord) return tableRecord;
   const blobRecord = await fetchBlobJson(profilePath(scopeKey, userId));
   if (blobRecord?.payload) return normalizeStoredRecord(blobRecord.payload);
   return getSupabaseRecord(scopeKey, profileRecordId(scopeKey, userId));
@@ -226,6 +304,8 @@ export async function saveMiningProfileRecord(scopeKey, userId, profileRecord) {
     channelId: MINING_CHANNEL_ID,
     type: PROFILE_TYPE
   });
+  const tableRecord = await upsertMiningTableProfileRecord(scopeKey, userId, normalized);
+  if (tableRecord) return tableRecord;
   const wroteBlob = await writeBlobJson(profilePath(scopeKey, userId), normalized);
   if (wroteBlob) return normalized;
   return upsertSupabaseRecord(scopeKey, normalized);

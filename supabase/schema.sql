@@ -18,3 +18,20 @@ create index if not exists messages_scope_channel_server_created_idx
 
 create index if not exists messages_scope_server_created_idx
   on public.messages (scope_key, server_created_at_ms desc);
+
+create table if not exists public.mining_sessions (
+  scope_key text primary key,
+  record jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.mining_profiles (
+  scope_key text not null,
+  user_id text not null,
+  record jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default timezone('utc', now()),
+  primary key (scope_key, user_id)
+);
+
+create index if not exists mining_profiles_scope_idx
+  on public.mining_profiles (scope_key);
