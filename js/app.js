@@ -1,4 +1,4 @@
-﻿import { DiscordSDK, Events } from "@discord/embedded-app-sdk";
+import { DiscordSDK, Events } from "@discord/embedded-app-sdk";
 import { DEFAULT_DRAGON_CONFIG, normalizeDragonConfig } from "../shared/dragon-config.js";
 import {
   MINING_CHANNEL_ID,
@@ -3026,8 +3026,8 @@ function advanceMiningVisualState(deltaMs) {
     const serverDx = Number(entry.serverX ?? entry.x) - entry.x;
     const serverDy = Number(entry.serverY ?? entry.y) - entry.y;
     const serverDist = Math.sqrt(serverDx * serverDx + serverDy * serverDy);
-    if (serverDist > 0.3 && serverDist < 5) {
-      const correction = 1 - Math.exp(-deltaMs / 120);
+    if (serverDist > 0.5 && serverDist < 5) {
+      const correction = 1 - Math.exp(-deltaMs / 250);
       entry.x += serverDx * correction;
       entry.y += serverDy * correction;
     }

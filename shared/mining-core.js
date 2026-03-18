@@ -282,8 +282,6 @@ export function moveMiningPlayer(game, playerId, targetX, targetY, now = Date.no
   player.targetY = targetY;
   if (!player.lastMovedAtMs) player.lastMovedAtMs = now;
 
-  advancePlayerPosition(player, game.map, now);
-
   const dx = targetX - player.x;
   const dy = targetY - player.y;
   if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
