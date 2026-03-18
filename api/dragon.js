@@ -1,4 +1,5 @@
 import { DEFAULT_DRAGON_CONFIG, normalizeDragonConfig } from "../shared/dragon-config.js";
+import { broadcastRealtime } from "../server/realtime.js";
 import { appendMessage, listScopeMessages, updateMessage } from "../server/storage.js";
 
 const DRAGON_CHANNEL_ID = "casino:dragon";
@@ -23,11 +24,8 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const scopeKey = String(req.query.scopeKey || "local-preview");
-      const serverNowMs = Date.now();
-      const session = await getCurrentDragonSession(scopeKey);
-      const { config, updatedAtMs: configUpdatedAtMs } = await getDragonConfigPayload(scopeKey);
-      const recentResults = await getDragonRecentResults(scopeKey, serverNowMs);
-      res.status(200).json({ ok: true, session, config, configUpdatedAtMs, recentResults, serverNowMs });
+      const payload = await getDragonTransportPayload(scopeKey);
+      res.status(200).json({ ok: true, ...payload });
       return;
     }
 
@@ -50,6 +48,8 @@ export default async function handler(req, res) {
         clientMultiplier
       }));
 
+      await broadcastRealtime("dragon", scopeKey, { reason: action });
+
       res.status(200).json({
         ok: true,
         session: result.session,
@@ -69,6 +69,14 @@ export default async function handler(req, res) {
       details: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+export async function getDragonTransportPayload(scopeKey) {
+  const serverNowMs = Date.now();
+  const session = await getCurrentDragonSession(scopeKey);
+  const { config, updatedAtMs: configUpdatedAtMs } = await getDragonConfigPayload(scopeKey);
+  const recentResults = await getDragonRecentResults(scopeKey, serverNowMs);
+  return { session, config, configUpdatedAtMs, recentResults, serverNowMs };
 }
 
 async function withDragonQueue(scopeKey, worker) {

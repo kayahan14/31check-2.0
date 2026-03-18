@@ -22,6 +22,7 @@ import {
   saveMiningProfileRecord,
   saveMiningSessionRecord
 } from "../server/mining-storage.js";
+import { broadcastRealtime } from "../server/realtime.js";
 
 globalThis.__miningQueues ||= {};
 globalThis.__miningRuntimeStore ||= { scopes: {} };
@@ -54,7 +55,7 @@ export default async function handler(req, res) {
         id: String(req.query.actorId || ""),
         name: String(req.query.actorName || "Oyuncu")
       };
-      const snapshot = await withMiningQueue(scopeKey, async () => getMiningSnapshot(scopeKey, actor));
+      const snapshot = await withMiningQueue(scopeKey, async () => getMiningTransportPayload(scopeKey, actor));
       res.status(200).json({
         ok: true,
         session: snapshot.session,
@@ -80,6 +81,8 @@ export default async function handler(req, res) {
         targetId
       }));
 
+      await broadcastRealtime("mining", scopeKey, { reason: action });
+
       res.status(200).json({
         ok: true,
         session: result.session,
@@ -100,6 +103,10 @@ export default async function handler(req, res) {
       details: describeMiningError(error)
     });
   }
+}
+
+export async function getMiningTransportPayload(scopeKey, actor) {
+  return getMiningSnapshot(scopeKey, actor);
 }
 
 async function proxyMiningRequest(req, res) {

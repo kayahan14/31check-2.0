@@ -1,7 +1,9 @@
 import dotenv from "dotenv";
+import { createServer } from "node:http";
 import express from "express";
-import dragonHandler from "../api/dragon.js";
-import miningHandler from "../api/mining.js";
+import dragonHandler, { getDragonTransportPayload } from "../api/dragon.js";
+import miningHandler, { getMiningTransportPayload } from "../api/mining.js";
+import { attachRealtimeServer, registerRealtimeProvider } from "./realtime.js";
 import { appendMessage, listScopeChannels, updateMessage } from "./storage.js";
 
 dotenv.config();
@@ -132,6 +134,12 @@ app.all("/api/mining", async (req, res) => {
   await miningHandler(req, res);
 });
 
-app.listen(port, () => {
+const server = createServer(app);
+
+registerRealtimeProvider("dragon", async ({ scopeKey }) => getDragonTransportPayload(scopeKey));
+registerRealtimeProvider("mining", async ({ scopeKey, actor }) => getMiningTransportPayload(scopeKey, actor));
+attachRealtimeServer(server, { allowedOrigins });
+
+server.listen(port, () => {
   console.log(`Discord Activity backend listening on http://localhost:${port}`);
 });

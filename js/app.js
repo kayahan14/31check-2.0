@@ -17,9 +17,12 @@ import {
 } from "../shared/mining-core.js";
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://hjlxrgzxyafedqamlzer.supabase.co";
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_6e-aU1BGjgWj6tRHdYnD6Q_q5fSXo5X";
-const MOCK_MODE = new URLSearchParams(window.location.search).get("mock") === "1" || !DISCORD_CLIENT_ID;
+const GAME_BACKEND_URL = normalizeBackendOrigin(import.meta.env.VITE_GAME_BACKEND_URL || "");
+const PAGE_QUERY = new URLSearchParams(window.location.search);
+const MOCK_MODE = PAGE_QUERY.get("mock") === "1" || !DISCORD_CLIENT_ID;
+const MOCK_SCOPE_KEY = PAGE_QUERY.get("mockScope") || "local-preview";
+const MOCK_USER_ID = PAGE_QUERY.get("mockUser") || "local-user";
+const MOCK_USER_NAME = PAGE_QUERY.get("mockName") || "31check";
 const ADMIN_USER_IDS = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USER_IDS || "");
 const ADMIN_USERNAMES = parseCsv(import.meta.env.VITE_ACTIVITY_ADMIN_USERNAMES || "astrian");
 
@@ -101,21 +104,26 @@ const state = {
   discordSdk: null,
   runtimeMode: MOCK_MODE ? "mock" : "discord",
   runtimeNote: MOCK_MODE ? "Tarayıcı önizleme modu" : "Discord Activity başlatılıyor...",
-  scopeKey: "local-preview",
+  scopeKey: MOCK_SCOPE_KEY,
   messageSyncHandle: null,
   dragonTickerHandle: null,
-  dragonRealtimeClient: null,
-  dragonRealtimeChannel: null,
+  dragonRealtimeSocket: null,
   dragonSession: null,
   dragonStateLoading: true,
   dragonSessionSyncHandle: null,
   dragonServerClockLocalMs: 0,
   dragonServerClockServerMs: 0,
   dragonRealtimeReady: false,
+  dragonRealtimeReconnectHandle: null,
   dragonConfig: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigDraft: normalizeDragonConfig(DEFAULT_DRAGON_CONFIG),
   dragonConfigUpdatedAtMs: 0,
   dragonRecentResults: [],
+  miningRealtimeSocket: null,
+  miningRealtimeReady: false,
+  miningRealtimeReconnectHandle: null,
+  miningServerClockLocalMs: 0,
+  miningServerClockServerMs: 0,
   miningSession: null,
   miningProfile: null,
   miningStateLoading: true,
@@ -154,10 +162,10 @@ const state = {
   userModalView: "categories",
   userGameConfigView: "dragon",
   currentUser: {
-    id: "local-user",
-    username: "31check",
-    displayName: "31check",
-    tag: "@31check",
+    id: MOCK_USER_ID,
+    username: MOCK_USER_NAME,
+    displayName: MOCK_USER_NAME,
+    tag: `@${MOCK_USER_NAME}`,
     discriminator: "0001",
     avatarUrl: "",
     guildId: "",
@@ -179,6 +187,21 @@ const userBackdrop = document.getElementById("userBackdrop");
 const channelList = document.getElementById("channelList");
 const channelCategory = document.getElementById("channelCategory");
 const categoryList = document.getElementById("categoryList");
+
+window.__31checkDebug = {
+  getCurrentUser: () => cloneData(state.currentUser),
+  getDragonSnapshot: () => cloneData({
+    session: state.dragonSession,
+    config: state.dragonConfig,
+    recentResults: state.dragonRecentResults,
+    serverNowMs: getDragonNow()
+  }),
+  getMiningSnapshot: () => cloneData({
+    session: state.miningSession,
+    profile: state.miningProfile,
+    serverNowMs: getMiningNow()
+  })
+};
 const userModalTag = document.getElementById("userModalTag");
 const adminBadge = document.getElementById("adminBadge");
 const tabs = [...document.querySelectorAll(".tab")];
@@ -392,6 +415,10 @@ function bindStaticEvents() {
     state.selectedChannelId = initialChannelId();
     render();
   });
+  window.addEventListener("beforeunload", () => {
+    closeRealtimeSocket("dragon");
+    closeRealtimeSocket("mining");
+  });
 }
 
 async function initializeRuntime() {
@@ -442,7 +469,7 @@ async function initializeRuntime() {
     console.error("Discord SDK bootstrap failed, falling back to preview mode.", error);
     state.runtimeMode = "mock";
     state.runtimeNote = `Discord bağlanamadı: ${String(error?.message || "önizleme modu")}`;
-    state.scopeKey = "local-preview";
+    state.scopeKey = MOCK_SCOPE_KEY;
     state.messagesByChannel["1"] = [FALLBACK_MESSAGE];
     state.members = [...DEFAULT_MEMBERS];
     state.membersLoading = false;
@@ -667,6 +694,8 @@ function stopMessageSync() {
   stopDragonSessionSync();
   stopDragonModalLoop();
   stopMiningSessionSync();
+  closeRealtimeSocket("dragon");
+  closeRealtimeSocket("mining");
 }
 
 function handleVisibilitySync() {
@@ -2312,7 +2341,7 @@ async function handleDragonHubAction(action, options = {}) {
         render();
       }
     }
-    const response = await fetch("/api/dragon", {
+    const response = await fetch(buildGameApiUrl("/api/dragon"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2331,7 +2360,6 @@ async function handleDragonHubAction(action, options = {}) {
     }
     const payload = await response.json();
     applyDragonTransportPayload(payload, { forceRender: true });
-    await broadcastDragonTransportPayload(payload);
   } catch (error) {
     console.warn("Dragon hub action failed.", error);
   } finally {
@@ -2346,7 +2374,10 @@ async function loadDragonSession({ initial = false } = {}) {
   }
 
   try {
-    const response = await fetch(`/api/dragon?scopeKey=${encodeURIComponent(state.scopeKey)}&ts=${Date.now()}`, {
+    const response = await fetch(buildGameApiUrl("/api/dragon", {
+      scopeKey: state.scopeKey,
+      ts: Date.now()
+    }), {
       cache: "no-store"
     });
     if (!response.ok) return;
@@ -2365,7 +2396,7 @@ async function saveDragonConfig() {
   state.interactiveActionLocks["dragon-config"] = true;
   try {
     const config = normalizeDragonConfig(state.dragonConfigDraft);
-    const response = await fetch("/api/dragon", {
+    const response = await fetch(buildGameApiUrl("/api/dragon"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2383,7 +2414,6 @@ async function saveDragonConfig() {
     }
     const payload = await response.json();
     applyDragonTransportPayload(payload, { forceRender: false, overwriteDraft: true });
-    await broadcastDragonTransportPayload(payload);
     showToast("Ejderha ayarlari kaydedildi.");
     closeUserModal();
   } catch (error) {
@@ -2394,40 +2424,165 @@ async function saveDragonConfig() {
   }
 }
 
+function normalizeBackendOrigin(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw).origin.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function getGameBackendOrigin() {
+  if (GAME_BACKEND_URL) {
+    return GAME_BACKEND_URL;
+  }
+
+  const { hostname, port, origin } = window.location;
+  if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "5173") {
+    return "http://127.0.0.1:3001";
+  }
+
+  return origin.replace(/\/+$/, "");
+}
+
+function hasDirectRealtimeBackend() {
+  if (GAME_BACKEND_URL) return true;
+  const { hostname, port } = window.location;
+  return (hostname === "localhost" || hostname === "127.0.0.1") && port === "5173";
+}
+
+function buildGameApiUrl(path, query = {}) {
+  const url = new URL(path, `${getGameBackendOrigin()}/`);
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+  return url.toString();
+}
+
+function buildGameSocketUrl(stream, scopeKey) {
+  const url = new URL("/ws", `${getGameBackendOrigin()}/`);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("stream", String(stream || ""));
+  url.searchParams.set("scopeKey", String(scopeKey || "local-preview"));
+  url.searchParams.set("actorId", String(state.currentUser.id || ""));
+  url.searchParams.set("actorName", String(state.currentUser.displayName || state.currentUser.username || "Oyuncu"));
+  return url.toString();
+}
+
+function getRealtimeSocketState(kind) {
+  if (kind === "dragon") {
+    return {
+      socketKey: "dragonRealtimeSocket",
+      readyKey: "dragonRealtimeReady",
+      reconnectKey: "dragonRealtimeReconnectHandle"
+    };
+  }
+
+  return {
+    socketKey: "miningRealtimeSocket",
+    readyKey: "miningRealtimeReady",
+    reconnectKey: "miningRealtimeReconnectHandle"
+  };
+}
+
+function closeRealtimeSocket(kind) {
+  const keys = getRealtimeSocketState(kind);
+  const reconnectHandle = state[keys.reconnectKey];
+  if (reconnectHandle) {
+    window.clearTimeout(reconnectHandle);
+    state[keys.reconnectKey] = null;
+  }
+
+  const socket = state[keys.socketKey];
+  if (socket) {
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    try {
+      socket.close();
+    } catch {
+      // Best-effort shutdown.
+    }
+  }
+  state[keys.socketKey] = null;
+  state[keys.readyKey] = false;
+}
+
+function scheduleRealtimeReconnect(kind, connect) {
+  const keys = getRealtimeSocketState(kind);
+  if (state[keys.reconnectKey]) return;
+  state[keys.reconnectKey] = window.setTimeout(() => {
+    state[keys.reconnectKey] = null;
+    connect();
+  }, 1200);
+}
+
+function connectRealtimeSocket(kind, scopeKey, handlers) {
+  if (!hasDirectRealtimeBackend()) {
+    return;
+  }
+  const keys = getRealtimeSocketState(kind);
+  closeRealtimeSocket(kind);
+
+  let socket;
+  try {
+    socket = new WebSocket(buildGameSocketUrl(kind, scopeKey));
+  } catch (error) {
+    console.warn(`${kind} realtime socket failed to initialize.`, error);
+    scheduleRealtimeReconnect(kind, () => connectRealtimeSocket(kind, scopeKey, handlers));
+    return;
+  }
+
+  state[keys.socketKey] = socket;
+
+  socket.onopen = () => {
+    state[keys.readyKey] = true;
+    handlers?.onHeartbeat?.(Date.now());
+    handlers?.onStatusChange?.(true);
+  };
+
+  socket.onmessage = (event) => {
+    try {
+      const message = JSON.parse(String(event.data || "{}"));
+      if (Number.isFinite(Number(message?.serverNowMs))) {
+        handlers?.onHeartbeat?.(Number(message.serverNowMs));
+      }
+      if (message?.type === "snapshot" && message?.payload) {
+        handlers?.onSnapshot?.(message.payload);
+      }
+    } catch (error) {
+      console.warn(`${kind} realtime message parse failed.`, error);
+    }
+  };
+
+  socket.onerror = (error) => {
+    console.warn(`${kind} realtime socket error.`, error);
+  };
+
+  socket.onclose = () => {
+    const isSameSocket = state[keys.socketKey] === socket;
+    if (!isSameSocket) return;
+    state[keys.socketKey] = null;
+    state[keys.readyKey] = false;
+    handlers?.onStatusChange?.(false);
+    scheduleRealtimeReconnect(kind, () => connectRealtimeSocket(kind, scopeKey, handlers));
+  };
+}
+
 async function initializeDragonTransport() {
   await loadDragonSession({ initial: true });
   startDragonSessionSync();
-
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
-  try {
-    const { createClient } = await import("@supabase/supabase-js");
-    if (!state.dragonRealtimeClient) {
-      state.dragonRealtimeClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    }
-    if (state.dragonRealtimeChannel) {
-      state.dragonRealtimeClient.removeChannel(state.dragonRealtimeChannel);
-      state.dragonRealtimeChannel = null;
-    }
-    state.dragonRealtimeReady = false;
-    state.dragonRealtimeChannel = state.dragonRealtimeClient
-      .channel(`dragon-${state.scopeKey}`, {
-        config: {
-          broadcast: { self: true }
-        }
-      })
-      .on("broadcast", { event: "session-sync" }, ({ payload }) => {
-        applyDragonTransportPayload(payload);
-      })
-      .subscribe((status) => {
-        state.dragonRealtimeReady = status === "SUBSCRIBED";
-        if (status === "SUBSCRIBED") {
-          void loadDragonSession();
-        }
-      });
-  } catch (error) {
-    console.warn("Dragon realtime subscription failed, falling back to refresh.", error);
-    state.dragonRealtimeReady = false;
-  }
+  connectRealtimeSocket("dragon", state.scopeKey, {
+    onHeartbeat: syncDragonServerClock,
+    onSnapshot: (payload) => {
+      applyDragonTransportPayload(payload);
+    },
+    onStatusChange: () => startDragonSessionSync()
+  });
 }
 
 function startDragonSessionSync() {
@@ -2435,9 +2590,10 @@ function startDragonSessionSync() {
   if (!state.scopeKey) return;
 
   state.dragonSessionSyncHandle = window.setInterval(() => {
+    if (state.dragonRealtimeReady && !isCasinoDragonView()) return;
     if (!state.dragonSession && !isCasinoDragonView()) return;
     void loadDragonSession();
-  }, 1000);
+  }, state.dragonRealtimeReady ? 5000 : 1000);
 }
 
 function stopDragonSessionSync() {
@@ -2451,6 +2607,13 @@ async function initializeMiningTransport() {
   startMiningSessionSync();
   startMiningUiTicker();
   window.advanceTime = (ms) => new Promise((resolve) => window.setTimeout(resolve, Number(ms || 0)));
+  connectRealtimeSocket("mining", getMiningScopeKey(), {
+    onHeartbeat: syncMiningServerClock,
+    onSnapshot: (payload) => {
+      applyMiningTransportPayload(payload);
+    },
+    onStatusChange: () => startMiningSessionSync()
+  });
 }
 
 function getMiningScopeKey() {
@@ -2464,7 +2627,12 @@ async function loadMiningState({ initial = false } = {}) {
   }
 
   try {
-    const response = await fetch(`/api/mining?scopeKey=${encodeURIComponent(getMiningScopeKey())}&actorId=${encodeURIComponent(state.currentUser.id)}&actorName=${encodeURIComponent(state.currentUser.displayName)}&ts=${Date.now()}`, {
+    const response = await fetch(buildGameApiUrl("/api/mining", {
+      scopeKey: getMiningScopeKey(),
+      actorId: state.currentUser.id,
+      actorName: state.currentUser.displayName,
+      ts: Date.now()
+    }), {
       cache: "no-store"
     });
     if (!response.ok) return;
@@ -2483,9 +2651,10 @@ function startMiningSessionSync() {
   if (!state.scopeKey) return;
 
   state.miningSessionSyncHandle = window.setInterval(() => {
+    if (state.miningRealtimeReady && !isCasinoMiningView()) return;
     if (!state.miningSession && !isCasinoMiningView()) return;
     void loadMiningState();
-  }, 300);
+  }, state.miningRealtimeReady ? 2500 : 500);
 }
 
 function stopMiningSessionSync() {
@@ -2499,9 +2668,9 @@ function startMiningUiTicker() {
   state.miningUiTickerHandle = window.setInterval(() => {
     if (!isCasinoMiningView()) return;
     const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
-    const now = Date.now();
+    const now = getMiningNow();
     if (phase === "active" && (now - state.miningUiLastRenderAtMs) >= 300) {
-      state.miningUiLastRenderAtMs = now;
+      state.miningUiLastRenderAtMs = Date.now();
       if (!updateMiningActiveStageDom({ repaintCanvas: false })) {
         render();
       }
@@ -2519,6 +2688,7 @@ function applyMiningTransportPayload(payload, options = {}) {
   const { forceRender = false } = options;
   const previousPhase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
   const previousKey = getMiningTransportRenderKey(state.miningSession, state.miningProfile);
+  syncMiningServerClock(payload?.serverNowMs);
   const nextSession = payload?.session
     ? {
       ...payload.session,
@@ -2591,7 +2761,7 @@ async function performMiningAction(action, meta = {}, options = {}) {
   if (state.interactiveActionLocks["mining"]) return;
   state.interactiveActionLocks["mining"] = true;
   try {
-    const response = await fetch("/api/mining", {
+    const response = await fetch(buildGameApiUrl("/api/mining"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2651,7 +2821,7 @@ function renderMiningStageJoinAction(player) {
     : "";
 }
 
-function renderMiningStageHudPills(session, activePlayer, now = Date.now()) {
+function renderMiningStageHudPills(session, activePlayer, now = getMiningNow()) {
   const joinedCount = session?.players?.length || 0;
   const collapseMsLeft = session?.collapseAtMs ? Math.max(0, session.collapseAtMs - now) : 0;
   const hardMsLeft = session?.hardCollapseAtMs ? Math.max(0, session.hardCollapseAtMs - now) : MINING_TARGET_RUN_MS;
@@ -2665,7 +2835,7 @@ function renderMiningStageHudPills(session, activePlayer, now = Date.now()) {
   `;
 }
 
-function renderMiningSummaryText(session, now = Date.now()) {
+function renderMiningSummaryText(session, now = getMiningNow()) {
   if (session?.currentEvent) {
     return `${session.currentEvent.label} ${formatDurationLabel(session.currentEvent.expiresAtMs - now)}`;
   }
@@ -4362,25 +4532,6 @@ function getDragonRoundAutoSettings(session = state.dragonSession) {
   };
 }
 
-async function broadcastDragonTransportPayload(payload) {
-  if (!state.dragonRealtimeChannel || !state.dragonRealtimeReady) return;
-  try {
-    await state.dragonRealtimeChannel.send({
-      type: "broadcast",
-      event: "session-sync",
-      payload: {
-        session: payload?.session || null,
-        config: payload?.config || state.dragonConfig,
-        configUpdatedAtMs: Number(payload?.configUpdatedAtMs || state.dragonConfigUpdatedAtMs || 0),
-        recentResults: Array.isArray(payload?.recentResults) ? payload.recentResults : state.dragonRecentResults,
-        serverNowMs: payload?.serverNowMs || getDragonNow()
-      }
-    });
-  } catch (error) {
-    console.warn("Dragon broadcast send failed.", error);
-  }
-}
-
 function syncDragonServerClock(serverNowMs) {
   const numeric = Number(serverNowMs);
   if (!Number.isFinite(numeric) || numeric <= 0) return;
@@ -4403,6 +4554,27 @@ function getDragonMonotonicLocalNow() {
 function getDragonNow(localNow = getDragonMonotonicLocalNow()) {
   const anchorLocalMs = Number(state.dragonServerClockLocalMs || 0);
   const anchorServerMs = Number(state.dragonServerClockServerMs || 0);
+  if (anchorLocalMs > 0 && anchorServerMs > 0) {
+    return anchorServerMs + Math.max(0, localNow - anchorLocalMs);
+  }
+  return Date.now();
+}
+
+function syncMiningServerClock(serverNowMs) {
+  const numeric = Number(serverNowMs);
+  if (!Number.isFinite(numeric) || numeric <= 0) return;
+  const localNow = getDragonMonotonicLocalNow();
+  const currentEstimate = getMiningNow(localNow);
+  const nextServerNow = state.miningServerClockServerMs > 0
+    ? Math.max(numeric, currentEstimate)
+    : numeric;
+  state.miningServerClockLocalMs = localNow;
+  state.miningServerClockServerMs = nextServerNow;
+}
+
+function getMiningNow(localNow = getDragonMonotonicLocalNow()) {
+  const anchorLocalMs = Number(state.miningServerClockLocalMs || 0);
+  const anchorServerMs = Number(state.miningServerClockServerMs || 0);
   if (anchorLocalMs > 0 && anchorServerMs > 0) {
     return anchorServerMs + Math.max(0, localNow - anchorLocalMs);
   }
