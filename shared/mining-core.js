@@ -2,8 +2,8 @@ export const MINING_CHANNEL_ID = "casino:mining";
 export const MINING_TYPE = "mining_session";
 export const MINING_PROFILE_TYPE = "mining_profile";
 export const MINING_SLOT_KEYS = ["armor", "boots", "bag", "tool", "pickaxe"];
-export const MINING_JOIN_WINDOW_MS = 0;
-export const MINING_TARGET_RUN_MS = 12 * 60 * 1000;
+export const MINING_JOIN_WINDOW_MS = 3 * 60 * 1000;
+export const MINING_TARGET_RUN_MS = 10 * 60 * 1000;
 export const MINING_EXIT_COLLAPSE_MS = 90 * 1000;
 export const MINING_TIMEOUT_COLLAPSE_MS = 75 * 1000;
 export const MINING_EVENT_LIFETIME_MS = 75 * 1000;
@@ -15,6 +15,12 @@ const MINING_MAP_BASE_SIZE = 193;
 const MINING_MAP_PLAYER_GROWTH = 12;
 const MINING_MAP_MAX_SIZE = 257;
 const MINING_EFFECT_LIFETIME_MS = 900;
+const MINING_PLAYER_RADIUS = 0.35;
+const MINING_BASE_SPEED = 4.0;
+const MINING_MIN_SPEED = 1.5;
+const MINING_MINE_RANGE = 1.4;
+const MINING_ATTACK_RANGE = 1.4;
+const MINING_MOVE_STEP = 0.05;
 
 const FLOOR_TILE = { kind: "floor", oreId: "", hp: 0, maxHp: 0, reward: 0, requiredTier: 0, moleChance: 0 };
 const MINING_TRANSPORT_MAP_VERSION = 1;
@@ -239,10 +245,10 @@ export function getMiningVisibleTiles(game, playerId, radius = MINING_VIEW_RADIU
   }
 
   const tiles = [];
-  const originX = Math.max(0, player.x - radius);
-  const originY = Math.max(0, player.y - radius);
-  const maxX = Math.min(map.size - 1, player.x + radius);
-  const maxY = Math.min(map.size - 1, player.y + radius);
+  const originX = Math.max(0, Math.floor(player.x) - radius);
+  const originY = Math.max(0, Math.floor(player.y) - radius);
+  const maxX = Math.min(map.size - 1, Math.ceil(player.x) + radius);
+  const maxY = Math.min(map.size - 1, Math.ceil(player.y) + radius);
   for (let y = originY; y <= maxY; y += 1) {
     for (let x = originX; x <= maxX; x += 1) {
       tiles.push({
@@ -261,33 +267,45 @@ export function getMiningVisibleTiles(game, playerId, radius = MINING_VIEW_RADIU
   };
 }
 
-export function moveMiningPlayer(game, playerId, dx, dy, now = Date.now()) {
+export function moveMiningPlayer(game, playerId, targetX, targetY, now = Date.now()) {
   const player = getMiningCurrentPlayer(game, playerId);
   if (!player || player.status !== "active") return { changed: false, reason: "inactive" };
-  if (Math.abs(dx) + Math.abs(dy) !== 1) return { changed: false, reason: "invalid" };
-  if (now < Number(player.nextActionAtMs || 0)) return { changed: false, reason: "cooldown" };
-  const nextTile = getMiningTile(game.map, player.x + dx, player.y + dy);
-  if (!nextTile || (nextTile.kind !== "floor" && nextTile.kind !== "exit")) {
+
+  const tileX = Math.floor(targetX);
+  const tileY = Math.floor(targetY);
+  const tile = getMiningTile(game.map, tileX, tileY);
+  if (!tile || (tile.kind !== "floor" && tile.kind !== "exit")) {
     return { changed: false, reason: "blocked" };
   }
 
-  player.x += dx;
-  player.y += dy;
-  player.facing = getFacingFromDelta(dx, dy);
+  player.targetX = targetX;
+  player.targetY = targetY;
+  if (!player.lastMovedAtMs) player.lastMovedAtMs = now;
+
+  advancePlayerPosition(player, game.map, now);
+
+  const dx = targetX - player.x;
+  const dy = targetY - player.y;
+  if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+    player.facing = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+  }
+
   player.lastAction = "move";
   player.lastActionAtMs = now;
-  player.nextActionAtMs = now + getMoveCooldownMs(player);
-  if (nextTile.kind === "exit") {
+  player.speed = getPlayerSpeed(player);
+
+  const currentTile = getMiningTile(game.map, Math.floor(player.x), Math.floor(player.y));
+  if (currentTile?.kind === "exit") {
     const extraction = extractMiningPlayer(game, playerId, now);
     return {
-      changed: Boolean(extraction.changed),
+      changed: true,
       reason: extraction.reason || "",
       player,
       extracted: Boolean(extraction.changed),
       awardedCoins: Math.max(0, Math.round(Number(extraction.awardedCoins || 0)))
     };
   }
-  game.summary = `${player.name} ilerliyor.`;
+
   game.revision += 1;
   return { changed: true, reason: "", player };
 }
@@ -319,7 +337,9 @@ export function mineMiningTile(game, playerId, targetX, targetY, now = Date.now(
   const tile = getMiningTile(game.map, targetX, targetY);
   if (!player || player.status !== "active") return { changed: false, reason: "inactive" };
   if (!tile || tile.kind !== "wall") return { changed: false, reason: "invalid-target" };
-  if (manhattan(player.x, player.y, targetX, targetY) !== 1) return { changed: false, reason: "range" };
+  const tileCenterX = Math.round(Number(targetX)) + 0.5;
+  const tileCenterY = Math.round(Number(targetY)) + 0.5;
+  if (euclidean(player.x, player.y, tileCenterX, tileCenterY) > MINING_MINE_RANGE) return { changed: false, reason: "range" };
   if (now < Number(player.nextActionAtMs || 0)) return { changed: false, reason: "cooldown" };
   if (getPickaxeTier(player) < Number(tile.requiredTier || 1)) return { changed: false, reason: "pick-tier" };
 
@@ -392,7 +412,9 @@ export function attackMiningMole(game, playerId, targetId, now = Date.now()) {
   const player = getMiningCurrentPlayer(game, playerId);
   const mole = (game?.moles || []).find((entry) => entry.id === String(targetId || ""));
   if (!player || player.status !== "active" || !mole) return { changed: false, reason: "invalid" };
-  if (manhattan(player.x, player.y, mole.x, mole.y) !== 1) return { changed: false, reason: "range" };
+  const moleCenterX = mole.x + 0.5;
+  const moleCenterY = mole.y + 0.5;
+  if (euclidean(player.x, player.y, moleCenterX, moleCenterY) > MINING_ATTACK_RANGE) return { changed: false, reason: "range" };
   if (now < Number(player.nextActionAtMs || 0)) return { changed: false, reason: "cooldown" };
 
   mole.hp = Math.max(0, Number(mole.hp || 0) - 18);
@@ -429,7 +451,7 @@ export function attackMiningMole(game, playerId, targetId, now = Date.now()) {
 
 export function extractMiningPlayer(game, playerId, now = Date.now()) {
   const player = getMiningCurrentPlayer(game, playerId);
-  const tile = player ? getMiningTile(game.map, player.x, player.y) : null;
+  const tile = player ? getMiningTile(game.map, Math.floor(player.x), Math.floor(player.y)) : null;
   if (!player || player.status !== "active") return { changed: false, reason: "inactive" };
   if (!tile || tile.kind !== "exit") return { changed: false, reason: "not-on-exit" };
 
@@ -529,6 +551,8 @@ function simulateMiningSession(game, now) {
     simulateMoleTick(game, tick * 1000);
   }
   game.lastSimulatedAtMs = now;
+
+  advanceAllPlayerPositions(game, now);
 
   if (game.collapseAtMs && now >= game.collapseAtMs) {
     game.status = "collapsed";
@@ -641,8 +665,8 @@ function simulateMoleTick(game, now) {
   for (const mole of game.moles) {
     const target = pickMoleTarget(game.players, mole);
     if (!target) continue;
-    const distance = manhattan(mole.x, mole.y, target.x, target.y);
-    if (distance <= 1) {
+    const distance = euclidean(mole.x + 0.5, mole.y + 0.5, target.x, target.y);
+    if (distance <= 1.2) {
       if (now >= Number(mole.nextAttackAtMs || 0)) {
         target.integrity = Math.max(0, Number(target.integrity || 100) - Number(mole.damage || 8));
         const stolenCoins = Math.min(target.runCoins, Math.max(4, Math.round((mole.damage || 8) * 1.6)));
@@ -668,9 +692,11 @@ function simulateMoleTick(game, now) {
       continue;
     }
 
-    const step = stepToward(mole, target);
+    const step = stepToward({ x: mole.x + 0.5, y: mole.y + 0.5 }, target);
     const nextTile = getMiningTile(game.map, mole.x + step.dx, mole.y + step.dy);
-    const occupied = (game.players || []).some((entry) => entry.status === "active" && entry.x === mole.x + step.dx && entry.y === mole.y + step.dy);
+    const nextCX = mole.x + step.dx + 0.5;
+    const nextCY = mole.y + step.dy + 0.5;
+    const occupied = (game.players || []).some((entry) => entry.status === "active" && euclidean(entry.x, entry.y, nextCX, nextCY) < 0.8);
     if (nextTile && nextTile.kind === "floor" && !occupied) {
       mole.facing = getFacingFromDelta(step.dx, step.dy);
       mole.x += step.dx;
@@ -690,12 +716,92 @@ function pickMoleTarget(players, mole) {
 }
 
 function getPlayerThreat(player, mole) {
-  const distance = Math.max(1, manhattan(player.x, player.y, mole.x, mole.y));
+  const distance = Math.max(1, euclidean(player.x, player.y, mole.x + 0.5, mole.y + 0.5));
   return (player.runCoins * 1.2) + ((100 - player.integrity) * 3) + (120 / distance);
 }
 
-function getMoveCooldownMs(player) {
-  return 95 + Math.min(250, Math.round(player.runCoins * 0.32));
+function getPlayerSpeed(player) {
+  const coinPenalty = Math.min(MINING_BASE_SPEED - MINING_MIN_SPEED, (player.runCoins || 0) * 0.003);
+  return Math.max(MINING_MIN_SPEED, MINING_BASE_SPEED - coinPenalty);
+}
+
+function advancePlayerPosition(player, map, now) {
+  if (player.targetX === undefined || player.targetY === undefined) return;
+  const dx = player.targetX - player.x;
+  const dy = player.targetY - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 0.01) {
+    player.x = player.targetX;
+    player.y = player.targetY;
+    player.lastMovedAtMs = now;
+    return;
+  }
+
+  const elapsed = Math.max(0, Math.min(1, (now - (player.lastMovedAtMs || now)) / 1000));
+  if (elapsed <= 0) { player.lastMovedAtMs = now; return; }
+
+  const speed = getPlayerSpeed(player);
+  const maxDist = elapsed * speed;
+  const dirX = dx / dist;
+  const dirY = dy / dist;
+  const moveDist = Math.min(maxDist, dist);
+
+  let px = player.x;
+  let py = player.y;
+  let remaining = moveDist;
+
+  while (remaining > 0.001) {
+    const step = Math.min(MINING_MOVE_STEP, remaining);
+    const newX = px + dirX * step;
+    const newY = py + dirY * step;
+
+    if (canOccupy(map, newX, newY)) {
+      px = newX;
+      py = newY;
+    } else if (canOccupy(map, newX, py)) {
+      px = newX;
+    } else if (canOccupy(map, px, newY)) {
+      py = newY;
+    } else {
+      break;
+    }
+    remaining -= step;
+  }
+
+  player.x = px;
+  player.y = py;
+  player.lastMovedAtMs = now;
+  player.speed = speed;
+}
+
+function advanceAllPlayerPositions(game, now) {
+  for (const player of (game.players || [])) {
+    if (player.status !== "active") continue;
+    advancePlayerPosition(player, game.map, now);
+    const tile = getMiningTile(game.map, Math.floor(player.x), Math.floor(player.y));
+    if (tile?.kind === "exit") {
+      extractMiningPlayer(game, player.id, now);
+    }
+  }
+}
+
+function canOccupy(map, px, py) {
+  const r = MINING_PLAYER_RADIUS;
+  const minTX = Math.floor(px - r);
+  const maxTX = Math.floor(px + r);
+  const minTY = Math.floor(py - r);
+  const maxTY = Math.floor(py + r);
+  for (let tx = minTX; tx <= maxTX; tx++) {
+    for (let ty = minTY; ty <= maxTY; ty++) {
+      const tile = getMiningTile(map, tx, ty);
+      if (!tile || tile.kind === "wall") return false;
+    }
+  }
+  return true;
+}
+
+function euclidean(ax, ay, bx, by) {
+  return Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
 }
 
 function getMineCooldownMs(player, tile) {
@@ -717,6 +823,10 @@ function createLobbyPlayer(actor, loadout) {
     status: "queued",
     x: 0,
     y: 0,
+    targetX: 0,
+    targetY: 0,
+    speed: MINING_BASE_SPEED,
+    lastMovedAtMs: 0,
     integrity: 100,
     runCoins: 0,
     totalWeight: 0,
@@ -738,8 +848,12 @@ function normalizeMiningPlayer(player) {
     id: String(player.id || "user"),
     name: String(player.name || "Oyuncu"),
     status: String(player.status || "queued"),
-    x: Math.max(0, Math.round(Number(player.x || 0))),
-    y: Math.max(0, Math.round(Number(player.y || 0))),
+    x: Math.max(0, Number(player.x || 0)),
+    y: Math.max(0, Number(player.y || 0)),
+    targetX: Number(player.targetX ?? player.x ?? 0),
+    targetY: Number(player.targetY ?? player.y ?? 0),
+    speed: Math.max(0, Number(player.speed || MINING_BASE_SPEED)),
+    lastMovedAtMs: Math.max(0, Math.round(Number(player.lastMovedAtMs || 0))),
     integrity: Math.max(0, Math.round(Number(player.integrity ?? 100))),
     runCoins: Math.max(0, Math.round(Number(player.runCoins || 0))),
     totalWeight: Math.max(0, Math.round(Number(player.totalWeight || computePlayerWeight(player)))),
@@ -747,8 +861,8 @@ function normalizeMiningPlayer(player) {
     extractedAtMs: Math.max(0, Math.round(Number(player.extractedAtMs || 0))),
     lastAction: String(player.lastAction || ""),
     lastActionAtMs: Math.max(0, Math.round(Number(player.lastActionAtMs || 0))),
-    lastActionTargetX: Math.max(0, Math.round(Number((player.lastActionTargetX ?? player.x) || 0))),
-    lastActionTargetY: Math.max(0, Math.round(Number((player.lastActionTargetY ?? player.y) || 0))),
+    lastActionTargetX: Math.max(0, Number((player.lastActionTargetX ?? player.x) || 0)),
+    lastActionTargetY: Math.max(0, Number((player.lastActionTargetY ?? player.y) || 0)),
     lastHurtAtMs: Math.max(0, Math.round(Number(player.lastHurtAtMs || 0))),
     facing: normalizeFacing(player.facing),
     loadout: normalizeLoadout(player.loadout)
@@ -986,6 +1100,10 @@ function spawnMiningPlayer(game, player, now, explicitMap = null, spawnIndex = 0
   const spawn = findAvailableSpawn(map, game.players || [], spawnIndex);
   player.x = spawn.x;
   player.y = spawn.y;
+  player.targetX = spawn.x;
+  player.targetY = spawn.y;
+  player.speed = MINING_BASE_SPEED;
+  player.lastMovedAtMs = now;
   player.status = "active";
   player.integrity = 100;
   player.runCoins = 0;
@@ -997,20 +1115,19 @@ function spawnMiningPlayer(game, player, now, explicitMap = null, spawnIndex = 0
 function findAvailableSpawn(map, players, spawnIndex = 0) {
   const center = Math.floor(map.size / 2);
   const preferred = [
-    { x: center, y: center },
-    { x: center + 1, y: center },
-    { x: center, y: center + 1 },
-    { x: center - 1, y: center },
-    { x: center, y: center - 1 }
+    { x: center + 0.5, y: center + 0.5 },
+    { x: center + 1.5, y: center + 0.5 },
+    { x: center + 0.5, y: center + 1.5 },
+    { x: center - 0.5, y: center + 0.5 },
+    { x: center + 0.5, y: center - 0.5 }
   ];
-  const occupied = new Set((players || [])
-    .filter((entry) => entry.status === "active")
-    .map((entry) => `${entry.x}:${entry.y}`));
+  const activePlayers = (players || []).filter((entry) => entry.status === "active");
 
   for (let index = 0; index < preferred.length; index += 1) {
     const candidate = preferred[(spawnIndex + index) % preferred.length];
-    const tile = getMiningTile(map, candidate.x, candidate.y);
-    if (tile?.kind === "floor" && !occupied.has(`${candidate.x}:${candidate.y}`)) {
+    const tile = getMiningTile(map, Math.floor(candidate.x), Math.floor(candidate.y));
+    const tooClose = activePlayers.some((entry) => euclidean(entry.x, entry.y, candidate.x, candidate.y) < 0.8);
+    if (tile?.kind === "floor" && !tooClose) {
       return candidate;
     }
   }
@@ -1019,14 +1136,17 @@ function findAvailableSpawn(map, players, spawnIndex = 0) {
     for (let y = center - radius; y <= center + radius; y += 1) {
       for (let x = center - radius; x <= center + radius; x += 1) {
         const tile = getMiningTile(map, x, y);
-        if (tile?.kind === "floor" && !occupied.has(`${x}:${y}`)) {
-          return { x, y };
+        const cx = x + 0.5;
+        const cy = y + 0.5;
+        const tooClose = activePlayers.some((entry) => euclidean(entry.x, entry.y, cx, cy) < 0.8);
+        if (tile?.kind === "floor" && !tooClose) {
+          return { x: cx, y: cy };
         }
       }
     }
   }
 
-  return { x: center, y: center };
+  return { x: center + 0.5, y: center + 0.5 };
 }
 
 function getOreForDepth(normalizedDepth) {

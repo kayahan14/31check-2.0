@@ -77,7 +77,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const { action, actor, x, y, direction, targetId } = req.body || {};
+      const { action, actor, x, y, direction, targetId, targetX, targetY } = req.body || {};
       const scopeKey = normalizeMiningScopeKey(req.body?.scopeKey);
       if (!action) {
         res.status(400).json({ error: "action is required." });
@@ -88,7 +88,9 @@ export default async function handler(req, res) {
         x,
         y,
         direction,
-        targetId
+        targetId,
+        targetX,
+        targetY
       }));
 
       await broadcastRealtime("mining", scopeKey, { reason: action });
@@ -395,8 +397,9 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
   let errorCode = "";
 
   if (action === "move") {
-    const delta = normalizeDirection(meta.direction);
-    const result = moveMiningPlayer(session, normalizedActor.id, delta.dx, delta.dy, now);
+    const moveTargetX = Number(meta.targetX ?? meta.x ?? 0);
+    const moveTargetY = Number(meta.targetY ?? meta.y ?? 0);
+    const result = moveMiningPlayer(session, normalizedActor.id, moveTargetX, moveTargetY, now);
     changed = result.changed;
     errorCode = result.reason || "";
     if (result.changed && result.extracted) {
@@ -520,17 +523,3 @@ function makeResult(sessionRecord, profile, now, errorCode = "", playerId = "") 
   };
 }
 
-function normalizeDirection(direction) {
-  switch (String(direction || "").toLowerCase()) {
-    case "up":
-      return { dx: 0, dy: -1 };
-    case "down":
-      return { dx: 0, dy: 1 };
-    case "left":
-      return { dx: -1, dy: 0 };
-    case "right":
-      return { dx: 1, dy: 0 };
-    default:
-      return { dx: 0, dy: 0 };
-  }
-}

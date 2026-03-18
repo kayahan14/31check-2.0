@@ -88,7 +88,6 @@ const MINING_MIN_ZOOM = 1;
 const MINING_MAX_ZOOM = 1.8;
 const MINING_DEFAULT_ZOOM = 1.3;
 const MINING_BASE_VISIBLE_TILES = 15.5;
-const MINING_PATH_NODE_LIMIT = 900;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
@@ -136,7 +135,6 @@ const state = {
   miningStateLoading: true,
   miningSessionSyncHandle: null,
   miningUiTickerHandle: null,
-  miningQueuedRetryHandle: 0,
   miningUiLastRenderAtMs: 0,
   miningCanvasRaf: 0,
   miningCanvasLastFrameAtMs: 0,
@@ -145,9 +143,8 @@ const state = {
   miningVisualPlayers: {},
   miningZoom: loadMiningZoomPreference(),
   miningViewTab: "entrance",
-  miningQueuedDirections: [],
-  miningQueuedInteraction: null,
   miningTargetTile: null,
+  miningAutoAction: null,
   miningBufferedInput: null,
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
@@ -216,18 +213,15 @@ window.__31checkDebug = {
     serverNowMs: getMiningNow()
   }),
   getMiningClientState: () => cloneData({
-    queuedDirections: state.miningQueuedDirections,
-    queuedInteraction: state.miningQueuedInteraction,
     targetTile: state.miningTargetTile,
-    bufferedInput: state.miningBufferedInput,
+    autoAction: state.miningAutoAction,
     miningLocked: Boolean(state.interactiveActionLocks["mining"])
   }),
   clickMiningTile: async (x, y) => {
-    const targetX = Math.round(Number(x));
-    const targetY = Math.round(Number(y));
+    const targetX = Number(x) + 0.5;
+    const targetY = Number(y) + 0.5;
     clearMiningQueuedActions();
-    state.miningTargetTile = { x: targetX, y: targetY };
-    await dispatchMiningCanvasIntent({ targetX, targetY, forceReplan: true });
+    await dispatchMiningCanvasIntent({ targetX, targetY });
     return cloneData(window.__31checkDebug.getMiningClientState());
   }
 };
@@ -2860,9 +2854,6 @@ function startMiningUiTicker() {
   state.miningUiTickerHandle = window.setInterval(() => {
     if (!isCasinoMiningView()) return;
     const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
-    if (phase === "active") {
-      void advanceMiningQueuedAction();
-    }
     const now = getMiningNow();
     if (phase === "active" && (now - state.miningUiLastRenderAtMs) >= 300) {
       state.miningUiLastRenderAtMs = Date.now();
@@ -2930,30 +2921,20 @@ function syncMiningVisualState(session, now = getMiningNow()) {
   const nextVisuals = {};
   for (const player of session.players || []) {
     const previous = previousVisuals[player.id] || null;
-    const teleported = previous && (Math.abs((previous.serverX ?? previous.targetX ?? previous.x) - player.x) + Math.abs((previous.serverY ?? previous.targetY ?? previous.y) - player.y) > 2);
-    const previousServerX = Number(previous?.serverX ?? previous?.targetX ?? previous?.x ?? player.x);
-    const previousServerY = Number(previous?.serverY ?? previous?.targetY ?? previous?.y ?? player.y);
-    const movedThisSnapshot = Boolean(
-      previous
-      && !teleported
-      && player.lastAction === "move"
-      && (player.x !== previousServerX || player.y !== previousServerY)
-    );
-    const moveFromX = movedThisSnapshot ? previousServerX : Number(player.x);
-    const moveFromY = movedThisSnapshot ? previousServerY : Number(player.y);
+    const serverX = Number(player.x);
+    const serverY = Number(player.y);
+    const teleported = previous && (Math.sqrt((previous.x - serverX) ** 2 + (previous.y - serverY) ** 2) > 5);
+
     nextVisuals[player.id] = {
       id: player.id,
       name: player.name,
-      x: !previous || teleported || player.status !== "active" ? moveFromX : previous.x,
-      y: !previous || teleported || player.status !== "active" ? moveFromY : previous.y,
-      targetX: player.x,
-      targetY: player.y,
-      serverX: player.x,
-      serverY: player.y,
-      moveFromX,
-      moveFromY,
-      moveStartAtMs: movedThisSnapshot ? Number(player.lastActionAtMs || 0) : 0,
-      moveEndAtMs: movedThisSnapshot ? Number(player.nextActionAtMs || 0) : 0,
+      x: !previous || teleported || player.status !== "active" ? serverX : previous.x,
+      y: !previous || teleported || player.status !== "active" ? serverY : previous.y,
+      targetX: Number(player.targetX ?? serverX),
+      targetY: Number(player.targetY ?? serverY),
+      serverX,
+      serverY,
+      speed: Number(player.speed || 4.0),
       status: player.status,
       facing: player.facing || previous?.facing || "right",
       integrity: Number(player.integrity || 0),
@@ -2973,10 +2954,10 @@ function syncMiningVisualState(session, now = getMiningNow()) {
   const shouldSnapCamera = !previousLocal
     || !Number.isFinite(state.miningCameraX)
     || !Number.isFinite(state.miningCameraY)
-    || (Math.abs(state.miningCameraX - localVisual.targetX) + Math.abs(state.miningCameraY - localVisual.targetY) > 10);
+    || (Math.sqrt((state.miningCameraX - localVisual.x) ** 2 + (state.miningCameraY - localVisual.y) ** 2) > 10);
   if (shouldSnapCamera) {
-    state.miningCameraX = localVisual.targetX;
-    state.miningCameraY = localVisual.targetY;
+    state.miningCameraX = localVisual.x;
+    state.miningCameraY = localVisual.y;
   }
 }
 
@@ -3019,34 +3000,58 @@ function tickMiningCanvasFrame(frameAtMs) {
 }
 
 function advanceMiningVisualState(deltaMs) {
-  const blend = 1 - Math.exp(-deltaMs / 42);
-  const now = getMiningNow();
   for (const entry of Object.values(state.miningVisualPlayers || {})) {
     if (!entry) continue;
-    let desiredX = Number(entry.serverX ?? entry.targetX ?? entry.x);
-    let desiredY = Number(entry.serverY ?? entry.targetY ?? entry.y);
-    if (entry.lastAction === "move" && entry.moveEndAtMs > entry.moveStartAtMs && now < entry.moveEndAtMs) {
-      const progress = clamp((now - entry.moveStartAtMs) / Math.max(1, entry.moveEndAtMs - entry.moveStartAtMs), 0, 1);
-      desiredX = entry.moveFromX + ((entry.serverX - entry.moveFromX) * progress);
-      desiredY = entry.moveFromY + ((entry.serverY - entry.moveFromY) * progress);
+    const speed = Number(entry.speed || 4.0);
+    const tx = Number(entry.targetX ?? entry.serverX ?? entry.x);
+    const ty = Number(entry.targetY ?? entry.serverY ?? entry.y);
+    const dx = tx - entry.x;
+    const dy = ty - entry.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 0.005) {
+      const maxMove = speed * (deltaMs / 1000);
+      if (maxMove >= dist) {
+        entry.x = tx;
+        entry.y = ty;
+      } else {
+        entry.x += (dx / dist) * maxMove;
+        entry.y += (dy / dist) * maxMove;
+      }
+      if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+        entry.facing = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+      }
     }
-    entry.targetX = desiredX;
-    entry.targetY = desiredY;
-    entry.x += (desiredX - entry.x) * blend;
-    entry.y += (desiredY - entry.y) * blend;
-    if (Math.abs(desiredX - entry.x) < 0.0015) entry.x = desiredX;
-    if (Math.abs(desiredY - entry.y) < 0.0015) entry.y = desiredY;
+
+    const serverDx = Number(entry.serverX ?? entry.x) - entry.x;
+    const serverDy = Number(entry.serverY ?? entry.y) - entry.y;
+    const serverDist = Math.sqrt(serverDx * serverDx + serverDy * serverDy);
+    if (serverDist > 0.3 && serverDist < 5) {
+      const correction = 1 - Math.exp(-deltaMs / 120);
+      entry.x += serverDx * correction;
+      entry.y += serverDy * correction;
+    }
   }
 
   const localVisual = state.miningVisualPlayers[state.currentUser.id] || null;
   if (!localVisual) return;
-  const motionX = clamp(localVisual.targetX - localVisual.x, -1, 1);
-  const motionY = clamp(localVisual.targetY - localVisual.y, -1, 1);
-  const leadX = motionX * 0.22;
-  const leadY = motionY * 0.22;
+
+  if (state.miningAutoAction && !state.interactiveActionLocks["mining"]) {
+    const aa = state.miningAutoAction;
+    const tileCX = (aa.tileX ?? aa.x) + 0.5;
+    const tileCY = (aa.tileY ?? aa.y) + 0.5;
+    const distToTarget = Math.sqrt((localVisual.x - tileCX) ** 2 + (localVisual.y - tileCY) ** 2);
+    if (distToTarget <= 1.4) {
+      const action = aa.type;
+      const meta = action === "mine" ? { x: aa.x, y: aa.y } : { targetId: aa.targetId };
+      state.miningAutoAction = null;
+      void performMiningAction(action, meta);
+    }
+  }
+
   const cameraBlend = 1 - Math.exp(-deltaMs / 105);
-  state.miningCameraX += ((localVisual.x + leadX) - state.miningCameraX) * cameraBlend;
-  state.miningCameraY += ((localVisual.y + leadY) - state.miningCameraY) * cameraBlend;
+  state.miningCameraX += (localVisual.x - state.miningCameraX) * cameraBlend;
+  state.miningCameraY += (localVisual.y - state.miningCameraY) * cameraBlend;
 }
 
 function getMiningTransportRenderKey(sessionRecord, profile) {
@@ -3091,8 +3096,8 @@ async function performMiningAction(action, meta = {}, options = {}) {
   if (state.interactiveActionLocks["mining"]) return;
   state.interactiveActionLocks["mining"] = true;
   try {
-    if (action === "move") {
-      applyOptimisticMiningMove(meta.direction);
+    if (action === "move" && meta.targetX !== undefined && meta.targetY !== undefined) {
+      applyOptimisticMiningMove(meta.targetX, meta.targetY);
     }
     const response = await fetch(buildGameApiUrl("/api/mining"), {
       method: "POST",
@@ -3430,17 +3435,52 @@ function handleMiningCanvasClick(event) {
   const localX = (event.clientX - rect.left) * scaleX;
   const localY = (event.clientY - rect.top) * scaleY;
   const metrics = getMiningCanvasMetrics(canvas, session, player);
-  const targetX = Math.floor(metrics.worldStartX + (localX / metrics.tilePx));
-  const targetY = Math.floor(metrics.worldStartY + (localY / metrics.tilePx));
-  clearMiningQueuedActions();
-  state.miningTargetTile = { x: targetX, y: targetY };
+  const worldX = metrics.worldStartX + (localX / metrics.tilePx);
+  const worldY = metrics.worldStartY + (localY / metrics.tilePx);
+  const tileX = Math.floor(worldX);
+  const tileY = Math.floor(worldY);
+
+  state.miningTargetTile = { x: tileX, y: tileY };
   requestMiningCanvasFrame();
-  const intent = { targetX, targetY, forceReplan: true };
-  if (state.interactiveActionLocks["mining"]) {
-    state.miningBufferedInput = intent;
+
+  const tile = getMiningTile(session.map, tileX, tileY);
+  if (!tile) return;
+
+  const tileCenterX = tileX + 0.5;
+  const tileCenterY = tileY + 0.5;
+  const distToTile = Math.sqrt((player.x - tileCenterX) ** 2 + (player.y - tileCenterY) ** 2);
+
+  const mole = (session.moles || []).find((m) => m.x === tileX && m.y === tileY);
+
+  if (mole) {
+    if (distToTile <= 1.4) {
+      void performMiningAction("attack", { targetId: mole.id });
+    } else {
+      state.miningAutoAction = { type: "attack", targetId: mole.id, tileX, tileY };
+      void performMiningAction("move", { targetX: tileCenterX, targetY: tileCenterY });
+    }
     return;
   }
-  void dispatchMiningCanvasIntent(intent);
+
+  if (tile.kind === "wall") {
+    if (distToTile <= 1.4) {
+      void performMiningAction("mine", { x: tileX, y: tileY });
+    } else {
+      const approachX = player.x < tileCenterX ? tileCenterX - 1.0 : tileCenterX + 1.0;
+      const approachY = player.y < tileCenterY ? tileCenterY - 1.0 : tileCenterY + 1.0;
+      const adjTile = getMiningTile(session.map, Math.floor(approachX), Math.floor(approachY));
+      const moveToX = adjTile && (adjTile.kind === "floor" || adjTile.kind === "exit") ? approachX : tileCenterX;
+      const moveToY = adjTile && (adjTile.kind === "floor" || adjTile.kind === "exit") ? approachY : tileCenterY;
+      state.miningAutoAction = { type: "mine", x: tileX, y: tileY };
+      void performMiningAction("move", { targetX: moveToX, targetY: moveToY });
+    }
+    return;
+  }
+
+  if (tile.kind === "floor" || tile.kind === "exit") {
+    state.miningAutoAction = null;
+    void performMiningAction("move", { targetX: worldX, targetY: worldY });
+  }
 }
 
 function handleMiningCanvasWheel(event) {
@@ -3456,215 +3496,34 @@ function handleMiningCanvasWheel(event) {
   requestMiningCanvasFrame();
 }
 
-function getMiningDirection(from, to) {
-  if (to.x === from.x && to.y === from.y - 1) return "up";
-  if (to.x === from.x && to.y === from.y + 1) return "down";
-  if (to.x === from.x - 1 && to.y === from.y) return "left";
-  if (to.x === from.x + 1 && to.y === from.y) return "right";
-  return "";
-}
 
-function getMiningDirectionDelta(direction) {
-  if (direction === "up") return { dx: 0, dy: -1 };
-  if (direction === "down") return { dx: 0, dy: 1 };
-  if (direction === "left") return { dx: -1, dy: 0 };
-  if (direction === "right") return { dx: 1, dy: 0 };
-  return { dx: 0, dy: 0 };
-}
-
-function applyOptimisticMiningMove(direction) {
+function applyOptimisticMiningMove(targetX, targetY) {
   const localVisual = state.miningVisualPlayers[state.currentUser.id];
-  const session = state.miningSession?.content || null;
-  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
-  if (!localVisual || !player) return;
-  const { dx, dy } = getMiningDirectionDelta(direction);
-  if (!dx && !dy) return;
-  const nextX = Number(player.x) + dx;
-  const nextY = Number(player.y) + dy;
-  const tile = session?.map ? getMiningTile(session.map, nextX, nextY) : null;
-  if (!(tile?.kind === "floor" || tile?.kind === "exit")) return;
-  localVisual.targetX = nextX;
-  localVisual.targetY = nextY;
-  localVisual.facing = direction;
-}
-
-function getMiningStepDirectionTowardTarget(session, player, targetX, targetY) {
-  const primaryAxisIsX = Math.abs(targetX - player.x) >= Math.abs(targetY - player.y);
-  const attempts = primaryAxisIsX
-    ? [
-      { x: player.x + Math.sign(targetX - player.x), y: player.y },
-      { x: player.x, y: player.y + Math.sign(targetY - player.y) }
-    ]
-    : [
-      { x: player.x, y: player.y + Math.sign(targetY - player.y) },
-      { x: player.x + Math.sign(targetX - player.x), y: player.y }
-    ];
-
-  for (const attempt of attempts) {
-    if (attempt.x === player.x && attempt.y === player.y) continue;
-    const tile = getMiningTile(session.map, attempt.x, attempt.y);
-    if (tile?.kind === "floor" || tile?.kind === "exit") {
-      return getMiningDirection(player, attempt);
-    }
+  if (!localVisual) return;
+  localVisual.targetX = targetX;
+  localVisual.targetY = targetY;
+  const dx = targetX - localVisual.x;
+  const dy = targetY - localVisual.y;
+  if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+    localVisual.facing = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
   }
-  return "";
 }
+
 
 function clearMiningQueuedActions() {
-  if (state.miningQueuedRetryHandle) {
-    window.clearTimeout(state.miningQueuedRetryHandle);
-    state.miningQueuedRetryHandle = 0;
-  }
-  state.miningQueuedDirections = [];
-  state.miningQueuedInteraction = null;
   state.miningTargetTile = null;
-}
-
-function scheduleMiningQueuedAction(delayMs = 0) {
-  if (state.miningQueuedRetryHandle) {
-    window.clearTimeout(state.miningQueuedRetryHandle);
-  }
-  state.miningQueuedRetryHandle = window.setTimeout(() => {
-    state.miningQueuedRetryHandle = 0;
-    void advanceMiningQueuedAction();
-  }, Math.max(0, Math.round(Number(delayMs || 0))));
+  state.miningAutoAction = null;
 }
 
 async function dispatchMiningCanvasIntent(intent) {
+  // Kept for buffered input compatibility
+  if (!intent) return;
   const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
   const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
   if (!session || !player || player.status !== "active" || !session.map) return;
-  const targetX = Math.round(Number(intent?.targetX));
-  const targetY = Math.round(Number(intent?.targetY));
-  if (intent?.forceReplan || !state.miningQueuedDirections.length) {
-    syncMiningQueuedPlan(session, player, { x: targetX, y: targetY });
-  }
-  await advanceMiningQueuedAction();
-}
-
-function queueMiningPath(pathDirections, interaction = null, targetTile = null) {
-  state.miningQueuedDirections = [...pathDirections];
-  state.miningQueuedInteraction = interaction ? { ...interaction } : null;
-  state.miningTargetTile = targetTile ? { ...targetTile } : null;
-}
-
-async function advanceMiningQueuedAction() {
-  if (state.interactiveActionLocks["mining"]) return;
-  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
-  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
-  if (!session || getMiningPhase(session) !== "active" || !player || player.status !== "active") {
-    clearMiningQueuedActions();
-    return;
-  }
-
-  if (state.miningTargetTile && !state.miningQueuedDirections.length && !state.miningQueuedInteraction) {
-    syncMiningQueuedPlan(session, player, state.miningTargetTile);
-  }
-
-  if (state.miningQueuedDirections.length) {
-    const direction = state.miningQueuedDirections[0];
-    const payload = await performMiningAction("move", { direction }, { silent: true });
-    if (typeof payload === "undefined") return;
-    if (!payload) {
-      clearMiningQueuedActions();
-      return;
-    }
-    const errorCode = payload?.errorCode || "";
-    if (!errorCode) {
-      state.miningQueuedDirections.shift();
-      const nextSession = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
-      const nextPlayer = nextSession ? getMiningCurrentPlayer(nextSession, state.currentUser.id) : null;
-      if (state.miningQueuedDirections.length || state.miningQueuedInteraction || state.miningTargetTile) {
-        const retryDelay = Math.max(0, Number(nextPlayer?.nextActionAtMs || 0) - getMiningNow()) + 8;
-        scheduleMiningQueuedAction(retryDelay);
-      }
-      return;
-    }
-    if (errorCode === "cooldown") {
-      const retryDelay = Math.max(0, Number(player.nextActionAtMs || 0) - getMiningNow()) + 8;
-      scheduleMiningQueuedAction(retryDelay || MINING_ACTION_TICK_MS);
-      return;
-    }
-    clearMiningQueuedActions();
-    return;
-  }
-
-  if (!state.miningQueuedInteraction) return;
-  const payload = await performMiningAction(state.miningQueuedInteraction.action, state.miningQueuedInteraction.meta, { silent: true });
-  if (typeof payload === "undefined") return;
-  if (!payload) {
-    clearMiningQueuedActions();
-    return;
-  }
-  const errorCode = payload?.errorCode || "";
-  if (!errorCode) {
-    state.miningQueuedInteraction = null;
-    state.miningQueuedDirections = [];
-    if (!state.miningTargetTile) return;
-    const nextSession = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
-    const nextPlayer = nextSession ? getMiningCurrentPlayer(nextSession, state.currentUser.id) : null;
-    if (!nextSession || !nextPlayer || nextPlayer.status !== "active") {
-      clearMiningQueuedActions();
-      return;
-    }
-    syncMiningQueuedPlan(nextSession, nextPlayer, state.miningTargetTile);
-    if (state.miningQueuedDirections.length || state.miningQueuedInteraction || state.miningTargetTile) {
-      const retryDelay = Math.max(0, Number(nextPlayer.nextActionAtMs || 0) - getMiningNow()) + 8;
-      scheduleMiningQueuedAction(retryDelay);
-    }
-    return;
-  }
-  if (errorCode === "cooldown") {
-    const retryDelay = Math.max(0, Number(player.nextActionAtMs || 0) - getMiningNow()) + 8;
-    scheduleMiningQueuedAction(retryDelay || MINING_ACTION_TICK_MS);
-    return;
-  }
-  clearMiningQueuedActions();
-}
-
-function syncMiningQueuedPlan(session, player, targetTile) {
-  if (!session?.map || !player || !targetTile) {
-    clearMiningQueuedActions();
-    return;
-  }
-
-  const targetX = Math.round(Number(targetTile.x));
-  const targetY = Math.round(Number(targetTile.y));
-  const tile = getMiningTile(session.map, targetX, targetY);
-  if (!tile) {
-    clearMiningQueuedActions();
-    return;
-  }
-
-  const mole = (session.moles || []).find((entry) => entry.x === targetX && entry.y === targetY);
-  const isAdjacent = Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1;
-
-  if (mole) {
-    if (isAdjacent) {
-      queueMiningPath([], { action: "attack", meta: { targetId: mole.id } }, { x: targetX, y: targetY });
-      return;
-    }
-    queueMiningPath(findMiningApproachPath(session, player, targetX, targetY, "mole"), null, { x: targetX, y: targetY });
-    return;
-  }
-
-  if (tile.kind === "wall") {
-    if (isAdjacent) {
-      queueMiningPath([], { action: "mine", meta: { x: targetX, y: targetY } }, { x: targetX, y: targetY });
-      return;
-    }
-    queueMiningPath(findMiningApproachPath(session, player, targetX, targetY, "wall"), null, { x: targetX, y: targetY });
-    return;
-  }
-
-  if ((tile.kind === "floor" || tile.kind === "exit") && player.x === targetX && player.y === targetY) {
-    state.miningTargetTile = null;
-    state.miningQueuedDirections = [];
-    state.miningQueuedInteraction = null;
-    return;
-  }
-
-  queueMiningPath(findMiningPath(session, { x: player.x, y: player.y }, { x: targetX, y: targetY }), null, { x: targetX, y: targetY });
+  const targetX = Number(intent?.targetX ?? 0);
+  const targetY = Number(intent?.targetY ?? 0);
+  void performMiningAction("move", { targetX, targetY });
 }
 
 function getMiningViewport(session, player) {
@@ -3689,85 +3548,12 @@ function getMiningViewport(session, player) {
     };
   }
   return {
-    originX: clamp(player.x - MINING_VIEW_RADIUS, 0, Math.max(0, mapSize - visibleSize)),
-    originY: clamp(player.y - MINING_VIEW_RADIUS, 0, Math.max(0, mapSize - visibleSize)),
+    originX: clamp(Math.floor(player.x) - MINING_VIEW_RADIUS, 0, Math.max(0, mapSize - visibleSize)),
+    originY: clamp(Math.floor(player.y) - MINING_VIEW_RADIUS, 0, Math.max(0, mapSize - visibleSize)),
     visibleSize
   };
 }
 
-function findMiningApproachPath(session, player, targetX, targetY, kind = "wall") {
-  const adjacentTargets = [
-    { x: targetX, y: targetY - 1 },
-    { x: targetX + 1, y: targetY },
-    { x: targetX, y: targetY + 1 },
-    { x: targetX - 1, y: targetY }
-  ].filter((entry) => {
-    const tile = getMiningTile(session.map, entry.x, entry.y);
-    return tile?.kind === "floor" || tile?.kind === "exit";
-  });
-
-  let bestPath = [];
-  for (const candidate of adjacentTargets) {
-    const path = findMiningPath(session, { x: player.x, y: player.y }, candidate);
-    if (!path.length && (candidate.x !== player.x || candidate.y !== player.y)) continue;
-    if (!bestPath.length || path.length < bestPath.length) {
-      bestPath = path;
-    }
-  }
-
-  if (!bestPath.length && kind === "wall" && Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1) {
-    return [];
-  }
-  return bestPath;
-}
-
-function findMiningPath(session, start, goal) {
-  if (!session?.map || !start || !goal) return [];
-  if (start.x === goal.x && start.y === goal.y) return [];
-  const queue = [start];
-  const visited = new Set([`${start.x}:${start.y}`]);
-  const parents = new Map();
-  let cursor = 0;
-
-  while (cursor < queue.length && visited.size <= MINING_PATH_NODE_LIMIT) {
-    const current = queue[cursor];
-    cursor += 1;
-    if (current.x === goal.x && current.y === goal.y) {
-      break;
-    }
-
-    for (const next of [
-      { x: current.x, y: current.y - 1 },
-      { x: current.x + 1, y: current.y },
-      { x: current.x, y: current.y + 1 },
-      { x: current.x - 1, y: current.y }
-    ]) {
-      const key = `${next.x}:${next.y}`;
-      if (visited.has(key)) continue;
-      const tile = getMiningTile(session.map, next.x, next.y);
-      if (!(tile?.kind === "floor" || tile?.kind === "exit")) continue;
-      visited.add(key);
-      parents.set(key, current);
-      queue.push(next);
-    }
-  }
-
-  const goalKey = `${goal.x}:${goal.y}`;
-  if (!parents.has(goalKey)) {
-    return [];
-  }
-
-  const path = [];
-  let current = goal;
-  while (current.x !== start.x || current.y !== start.y) {
-    const previous = parents.get(`${current.x}:${current.y}`);
-    if (!previous) return [];
-    path.push(getMiningDirection(previous, current));
-    current = previous;
-  }
-
-  return path.reverse().filter(Boolean);
-}
 
 function drawMiningQueuedPath(context, metrics) {
   if (!state.miningTargetTile) return;
