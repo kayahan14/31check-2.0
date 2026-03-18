@@ -1,11 +1,35 @@
 import { head, put } from "@vercel/blob";
-import { appendMessage, listScopeMessages, updateMessage } from "./storage.js";
+import { createClient } from "@supabase/supabase-js";
 
 const SESSION_PATH = "session.json";
+const MINING_CHANNEL_ID = "casino:mining";
+const SESSION_TYPE = "mining_session";
+const PROFILE_TYPE = "mining_profile";
+
 globalThis.__miningBlobFallbackStore ||= { sessions: {}, profiles: {} };
+let supabaseClient;
 
 function hasBlobConfig() {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+function hasSupabaseConfig() {
+  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
+function getSupabaseClient() {
+  if (supabaseClient) return supabaseClient;
+  supabaseClient = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    }
+  );
+  return supabaseClient;
 }
 
 function miningScopeFolder(scopeKey) {
@@ -20,8 +44,28 @@ function profilePath(scopeKey, userId) {
   return `${miningScopeFolder(scopeKey)}/profiles/${sanitizeSegment(userId)}.json`;
 }
 
+function sessionRecordId(scopeKey) {
+  return `mining-session:${scopeKey}`;
+}
+
+function profileRecordId(scopeKey, userId) {
+  return `mining-profile:${scopeKey}:${userId}`;
+}
+
 function sanitizeSegment(value) {
   return String(value || "unknown").replace(/[^a-zA-Z0-9:_-]/g, "_");
+}
+
+function normalizeStoredRecord(record) {
+  if (!record) return null;
+  return {
+    ...record,
+    channelId: record.channelId || MINING_CHANNEL_ID,
+    createdAt: record.createdAt || new Date(Number(record.createdAtMs || Date.now())).toISOString(),
+    createdAtMs: Number(record.createdAtMs || Date.now()),
+    serverCreatedAt: record.serverCreatedAt || new Date(Number(record.serverCreatedAtMs || record.createdAtMs || Date.now())).toISOString(),
+    serverCreatedAtMs: Number(record.serverCreatedAtMs || record.createdAtMs || Date.now())
+  };
 }
 
 async function fetchBlobJson(pathname) {
@@ -43,12 +87,8 @@ async function fetchBlobJson(pathname) {
       payload
     };
   } catch (error) {
-    const message = String(error?.message || "");
-    const normalized = message.toLowerCase();
-    if (normalized.includes("not found") || normalized.includes("does not exist")) {
-      return null;
-    }
-    if (normalized.includes("suspended")) {
+    const normalized = String(error?.message || "").toLowerCase();
+    if (normalized.includes("not found") || normalized.includes("does not exist") || normalized.includes("suspended")) {
       return null;
     }
     throw error;
@@ -67,66 +107,127 @@ async function writeBlobJson(pathname, payload) {
     } else {
       globalThis.__miningBlobFallbackStore.profiles[pathname] = record;
     }
-    return;
+    return true;
   }
-  await put(pathname, JSON.stringify(payload), {
-    access: "public",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: "application/json"
-  });
+
+  try {
+    await put(pathname, JSON.stringify(payload), {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json"
+    });
+    return true;
+  } catch (error) {
+    const normalized = String(error?.message || "").toLowerCase();
+    if (normalized.includes("suspended")) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function getSupabaseRecord(scopeKey, id) {
+  if (!hasSupabaseConfig()) return null;
+  const client = getSupabaseClient();
+  const { data, error } = await client
+    .from("messages")
+    .select([
+      "id",
+      "scope_key",
+      "channel_id",
+      "author_name",
+      "avatar_label",
+      "avatar_url",
+      "content",
+      "message_type",
+      "created_at",
+      "created_at_ms",
+      "server_created_at",
+      "server_created_at_ms"
+    ].join(","))
+    .eq("scope_key", scopeKey)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id,
+    channelId: data.channel_id,
+    author: data.author_name,
+    avatar: data.avatar_label,
+    avatarUrl: data.avatar_url,
+    content: typeof data.content === "string" ? JSON.parse(data.content) : data.content,
+    type: data.message_type,
+    createdAt: data.created_at,
+    createdAtMs: data.created_at_ms,
+    serverCreatedAt: data.server_created_at,
+    serverCreatedAtMs: data.server_created_at_ms
+  };
+}
+
+async function upsertSupabaseRecord(scopeKey, record) {
+  if (!hasSupabaseConfig()) {
+    return normalizeStoredRecord(record);
+  }
+  const client = getSupabaseClient();
+  const normalized = normalizeStoredRecord(record);
+  const payload = {
+    id: normalized.id,
+    scope_key: scopeKey,
+    channel_id: normalized.channelId,
+    author_name: normalized.author,
+    avatar_label: normalized.avatar,
+    avatar_url: normalized.avatarUrl || "",
+    content: JSON.stringify(normalized.content),
+    message_type: normalized.type,
+    created_at: normalized.createdAt,
+    created_at_ms: normalized.createdAtMs,
+    server_created_at: normalized.serverCreatedAt,
+    server_created_at_ms: normalized.serverCreatedAtMs
+  };
+
+  const { error } = await client
+    .from("messages")
+    .upsert(payload, { onConflict: "id" });
+
+  if (error) throw error;
+  return normalized;
 }
 
 export async function getMiningSessionRecord(scopeKey) {
-  const record = await fetchBlobJson(sessionPath(scopeKey));
-  if (record?.payload) return record.payload;
-  const sessions = await listScopeMessages(scopeKey, {
-    channelId: "casino:mining",
-    messageTypes: ["mining_session"],
-    limit: 1
-  });
-  return sessions[0] || null;
+  const blobRecord = await fetchBlobJson(sessionPath(scopeKey));
+  if (blobRecord?.payload) return normalizeStoredRecord(blobRecord.payload);
+  return getSupabaseRecord(scopeKey, sessionRecordId(scopeKey));
 }
 
 export async function saveMiningSessionRecord(scopeKey, sessionRecord) {
-  try {
-    await writeBlobJson(sessionPath(scopeKey), sessionRecord);
-    return sessionRecord;
-  } catch (error) {
-    const message = String(error?.message || "").toLowerCase();
-    if (!message.includes("suspended")) throw error;
-  }
-
-  const existing = sessionRecord?.id ? await getMiningSessionRecord(scopeKey) : null;
-  if (existing?.id) {
-    return updateMessage(scopeKey, existing.id, sessionRecord);
-  }
-  return appendMessage(scopeKey, sessionRecord.channelId, sessionRecord);
+  const normalized = normalizeStoredRecord({
+    ...sessionRecord,
+    id: sessionRecord?.id || sessionRecordId(scopeKey),
+    channelId: MINING_CHANNEL_ID,
+    type: SESSION_TYPE
+  });
+  const wroteBlob = await writeBlobJson(sessionPath(scopeKey), normalized);
+  if (wroteBlob) return normalized;
+  return upsertSupabaseRecord(scopeKey, normalized);
 }
 
 export async function getMiningProfileRecord(scopeKey, userId) {
-  const record = await fetchBlobJson(profilePath(scopeKey, userId));
-  if (record?.payload) return record.payload;
-  const profiles = await listScopeMessages(scopeKey, {
-    channelId: "casino:mining",
-    messageTypes: ["mining_profile"],
-    limit: 20
-  });
-  return profiles.find((entry) => String(entry?.content?.userId || "") === String(userId || "")) || null;
+  const blobRecord = await fetchBlobJson(profilePath(scopeKey, userId));
+  if (blobRecord?.payload) return normalizeStoredRecord(blobRecord.payload);
+  return getSupabaseRecord(scopeKey, profileRecordId(scopeKey, userId));
 }
 
 export async function saveMiningProfileRecord(scopeKey, userId, profileRecord) {
-  try {
-    await writeBlobJson(profilePath(scopeKey, userId), profileRecord);
-    return profileRecord;
-  } catch (error) {
-    const message = String(error?.message || "").toLowerCase();
-    if (!message.includes("suspended")) throw error;
-  }
-
-  const existing = await getMiningProfileRecord(scopeKey, userId);
-  if (existing?.id) {
-    return updateMessage(scopeKey, existing.id, profileRecord);
-  }
-  return appendMessage(scopeKey, profileRecord.channelId, profileRecord);
+  const normalized = normalizeStoredRecord({
+    ...profileRecord,
+    id: profileRecord?.id || profileRecordId(scopeKey, userId),
+    channelId: MINING_CHANNEL_ID,
+    type: PROFILE_TYPE
+  });
+  const wroteBlob = await writeBlobJson(profilePath(scopeKey, userId), normalized);
+  if (wroteBlob) return normalized;
+  return upsertSupabaseRecord(scopeKey, normalized);
 }
