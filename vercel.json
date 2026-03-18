@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/channel/:path*",
+      "destination": "/"
+    }
+  ]
+}

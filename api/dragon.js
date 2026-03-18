@@ -1,5 +1,5 @@
 import { DEFAULT_DRAGON_CONFIG, normalizeDragonConfig } from "../shared/dragon-config.js";
-import { appendMessage, listScopeChannels, updateMessage } from "../server/storage.js";
+import { appendMessage, listScopeMessages, updateMessage } from "../server/storage.js";
 
 const DRAGON_CHANNEL_ID = "casino:dragon";
 const DRAGON_TYPE = "dragon_state";
@@ -201,10 +201,11 @@ async function mutateDragonSession(scopeKey, action, actor, meta = {}) {
 }
 
 async function getCurrentDragonSession(scopeKey) {
-  const channels = await listScopeChannels(scopeKey);
-  const sessions = Object.values(channels || {})
-    .flat()
-    .filter((message) => message?.channelId === DRAGON_CHANNEL_ID && message?.type === DRAGON_TYPE);
+  const sessions = await listScopeMessages(scopeKey, {
+    channelId: DRAGON_CHANNEL_ID,
+    messageTypes: [DRAGON_TYPE],
+    limit: 50
+  });
 
   if (!sessions.length) return null;
 
@@ -216,10 +217,11 @@ async function getCurrentDragonSession(scopeKey) {
 }
 
 async function getDragonConfigPayload(scopeKey) {
-  const channels = await listScopeChannels(scopeKey);
-  const configs = Object.values(channels || {})
-    .flat()
-    .filter((message) => message?.channelId === DRAGON_CHANNEL_ID && message?.type === DRAGON_CONFIG_TYPE);
+  const configs = await listScopeMessages(scopeKey, {
+    channelId: DRAGON_CHANNEL_ID,
+    messageTypes: [DRAGON_CONFIG_TYPE],
+    limit: 20
+  });
 
   if (!configs.length) {
     return {
@@ -236,10 +238,11 @@ async function getDragonConfigPayload(scopeKey) {
 }
 
 async function getDragonRecentResults(scopeKey, now = Date.now()) {
-  const channels = await listScopeChannels(scopeKey);
-  const sessions = Object.values(channels || {})
-    .flat()
-    .filter((message) => message?.channelId === DRAGON_CHANNEL_ID && message?.type === DRAGON_TYPE)
+  const sessions = (await listScopeMessages(scopeKey, {
+    channelId: DRAGON_CHANNEL_ID,
+    messageTypes: [DRAGON_TYPE],
+    limit: 80
+  }))
     .map((message) => ({
       ...message,
       content: normalizeDragonState(message.content, now)
@@ -260,10 +263,11 @@ async function getDragonRecentResults(scopeKey, now = Date.now()) {
 }
 
 async function saveDragonConfig(scopeKey, config, actor, now) {
-  const channels = await listScopeChannels(scopeKey);
-  const configs = Object.values(channels || {})
-    .flat()
-    .filter((message) => message?.channelId === DRAGON_CHANNEL_ID && message?.type === DRAGON_CONFIG_TYPE);
+  const configs = await listScopeMessages(scopeKey, {
+    channelId: DRAGON_CHANNEL_ID,
+    messageTypes: [DRAGON_CONFIG_TYPE],
+    limit: 20
+  });
 
   const latest = configs.length
     ? [...configs].sort((left, right) => Number(right.serverCreatedAtMs || 0) - Number(left.serverCreatedAtMs || 0))[0]

@@ -14,7 +14,7 @@ import {
   normalizeMiningProfile,
   normalizeMiningSession
 } from "../shared/mining-core.js";
-import { appendMessage, listScopeChannels, updateMessage } from "../server/storage.js";
+import { appendMessage, listScopeMessages, updateMessage } from "../server/storage.js";
 
 globalThis.__miningQueues ||= {};
 
@@ -227,10 +227,11 @@ async function syncMiningSessionRecord(scopeKey, now = Date.now()) {
 }
 
 async function getCurrentMiningSessionRecord(scopeKey) {
-  const channels = await listScopeChannels(scopeKey);
-  const sessions = Object.values(channels || {})
-    .flat()
-    .filter((message) => message?.channelId === MINING_CHANNEL_ID && message?.type === MINING_TYPE);
+  const sessions = await listScopeMessages(scopeKey, {
+    channelId: MINING_CHANNEL_ID,
+    messageTypes: [MINING_TYPE],
+    limit: 10
+  });
 
   if (!sessions.length) return null;
 
@@ -262,10 +263,11 @@ async function ensureMiningProfileRecord(scopeKey, actor, now = Date.now()) {
 }
 
 async function getMiningProfileRecord(scopeKey, userId) {
-  const channels = await listScopeChannels(scopeKey);
-  const profiles = Object.values(channels || {})
-    .flat()
-    .filter((message) => message?.channelId === MINING_CHANNEL_ID && message?.type === MINING_PROFILE_TYPE)
+  const profiles = (await listScopeMessages(scopeKey, {
+    channelId: MINING_CHANNEL_ID,
+    messageTypes: [MINING_PROFILE_TYPE],
+    limit: 80
+  }))
     .filter((message) => String(message?.content?.userId || "") === String(userId || ""));
 
   if (!profiles.length) return null;

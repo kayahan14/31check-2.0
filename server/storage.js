@@ -5,17 +5,31 @@ const MESSAGE_LIMIT = 50;
 globalThis.__activityChatStore ||= { scopes: {} };
 let supabaseClient;
 
-export async function listScopeChannels(scopeKey) {
+export async function listScopeChannels(scopeKey, options = {}) {
+  return listScopeChannelsFiltered(scopeKey, options);
+}
+
+export async function listScopeMessages(scopeKey, options = {}) {
   if (hasSupabaseConfig()) {
     try {
-      return await listSupabaseChannels(scopeKey);
+      return await listSupabaseMessages(scopeKey, options);
     } catch (error) {
       console.warn("Supabase read failed, falling back to ephemeral store.", error);
-      return cloneChannels(globalThis.__activityChatStore.scopes?.[scopeKey]?.channels || {});
+      return listEphemeralMessages(scopeKey, options);
     }
   }
 
-  return cloneChannels(globalThis.__activityChatStore.scopes?.[scopeKey]?.channels || {});
+  return listEphemeralMessages(scopeKey, options);
+}
+
+async function listScopeChannelsFiltered(scopeKey, options = {}) {
+  const messages = await listScopeMessages(scopeKey, options);
+  const channels = {};
+  for (const message of messages) {
+    channels[message.channelId] ||= [];
+    channels[message.channelId].push(message);
+  }
+  return normalizeChannels(channels);
 }
 
 export async function appendMessage(scopeKey, channelId, message) {
@@ -89,9 +103,15 @@ export async function updateMessage(scopeKey, messageId, nextMessage) {
   return updateEphemeralMessage(scopeKey, messageId, normalizedMessage);
 }
 
-async function listSupabaseChannels(scopeKey) {
+async function listSupabaseMessages(scopeKey, options = {}) {
+  const {
+    channelId = "",
+    messageTypes = [],
+    excludeTypes = [],
+    limit = MESSAGE_LIMIT
+  } = options;
   const client = getSupabaseClient();
-  const { data, error } = await client
+  let query = client
     .from("messages")
     .select([
       "id",
@@ -109,20 +129,25 @@ async function listSupabaseChannels(scopeKey) {
     ].join(","))
     .eq("scope_key", scopeKey)
     .order("server_created_at_ms", { ascending: false })
-    .limit(MESSAGE_LIMIT);
+    .limit(Math.max(1, Number(limit) || MESSAGE_LIMIT));
+
+  if (channelId) {
+    query = query.eq("channel_id", channelId);
+  }
+  if (Array.isArray(messageTypes) && messageTypes.length) {
+    query = query.in("message_type", messageTypes);
+  }
+  if (Array.isArray(excludeTypes) && excludeTypes.length) {
+    query = query.not("message_type", "in", `(${excludeTypes.join(",")})`);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw error;
   }
 
-  const channels = {};
-  for (const row of [...(data || [])].reverse()) {
-    const message = mapRowToMessage(row);
-    channels[message.channelId] ||= [];
-    channels[message.channelId].push(message);
-  }
-
-  return normalizeChannels(channels);
+  return [...(data || [])].reverse().map((row) => mapRowToMessage(row));
 }
 
 async function appendSupabaseMessage(scopeKey, channelId, message) {
@@ -208,6 +233,24 @@ function appendEphemeralMessage(scopeKey, channelId, message) {
   globalThis.__activityChatStore.scopes[scopeKey].channels[channelId] = sortMessages(
     globalThis.__activityChatStore.scopes[scopeKey].channels[channelId]
   ).slice(-MESSAGE_LIMIT);
+}
+
+function listEphemeralMessages(scopeKey, options = {}) {
+  const {
+    channelId = "",
+    messageTypes = [],
+    excludeTypes = [],
+    limit = MESSAGE_LIMIT
+  } = options;
+  const channels = cloneChannels(globalThis.__activityChatStore.scopes?.[scopeKey]?.channels || {});
+  const flattened = Object.entries(channels)
+    .filter(([currentChannelId]) => !channelId || currentChannelId === channelId)
+    .flatMap(([, messages]) => messages || [])
+    .filter((message) => !messageTypes.length || messageTypes.includes(message.type))
+    .filter((message) => !excludeTypes.length || !excludeTypes.includes(message.type))
+    .sort((left, right) => normalizeServerCreatedAtMs(left) - normalizeServerCreatedAtMs(right));
+
+  return flattened.slice(-Math.max(1, Number(limit) || MESSAGE_LIMIT));
 }
 
 function updateEphemeralMessage(scopeKey, messageId, nextMessage) {

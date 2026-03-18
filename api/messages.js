@@ -1,5 +1,12 @@
 import { appendMessage, listScopeChannels, updateMessage } from "../server/storage.js";
 
+const CHAT_EXCLUDED_MESSAGE_TYPES = [
+  "dragon_state",
+  "dragon_config",
+  "mining_session",
+  "mining_profile"
+];
+
 export default async function handler(req, res) {
   try {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
@@ -8,7 +15,9 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const scopeKey = String(req.query.scopeKey || "local-preview");
-      const channels = await listScopeChannels(scopeKey);
+      const channels = await listScopeChannels(scopeKey, {
+        excludeTypes: CHAT_EXCLUDED_MESSAGE_TYPES
+      });
 
       res.status(200).json({
         scopeKey,
