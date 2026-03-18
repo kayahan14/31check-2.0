@@ -9,7 +9,6 @@ function getDatabaseUrl() {
     process.env.DATABASE_URL
     || process.env.POSTGRES_URL
     || process.env.LOCAL_DATABASE_URL
-    || process.env.NEON_DATABASE_URL
     || ""
   ).trim();
 }

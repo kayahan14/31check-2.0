@@ -8,7 +8,7 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const sourceUrl = normalizeDatabaseUrl(process.env.SOURCE_DATABASE_URL || process.env.NEON_DATABASE_URL || "");
+const sourceUrl = normalizeDatabaseUrl(process.env.SOURCE_DATABASE_URL || "");
 const targetUrl = normalizeDatabaseUrl(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.LOCAL_DATABASE_URL || "");
 
 if (!sourceUrl || !targetUrl) {

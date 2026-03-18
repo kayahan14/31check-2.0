@@ -12,8 +12,6 @@
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^1.7.0",
-    "@supabase/supabase-js": "^2.99.1",
-    "@vercel/blob": "^1.1.1",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "pg": "^8.20.0",
