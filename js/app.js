@@ -3441,8 +3441,7 @@ function handleMiningCanvasClick(event) {
   const tileX = Math.floor(worldX);
   const tileY = Math.floor(worldY);
 
-  state.miningTargetTile = { x: worldX, y: worldY };
-  requestMiningCanvasFrame();
+  state.miningClickRipple = { x: worldX, y: worldY, startMs: getMiningNow() };
 
   const tile = getMiningTile(session.map, tileX, tileY);
   if (!tile) return;
@@ -3531,7 +3530,7 @@ function applyOptimisticMiningMove(targetX, targetY) {
 
 
 function clearMiningQueuedActions() {
-  state.miningTargetTile = null;
+  state.miningClickRipple = null;
   state.miningAutoAction = null;
 }
 
@@ -3576,32 +3575,27 @@ function getMiningViewport(session, player) {
 
 
 function drawMiningQueuedPath(context, metrics) {
-  if (!state.miningTargetTile) return;
-  const { x, y } = state.miningTargetTile;
+  if (!state.miningClickRipple) return;
+  const { x, y, startMs } = state.miningClickRipple;
+  const elapsed = getMiningNow() - startMs;
+  if (elapsed > 400) {
+    state.miningClickRipple = null;
+    return;
+  }
+  const progress = elapsed / 400;
   const screenX = (x - metrics.worldStartX) * metrics.tilePx;
   const screenY = (y - metrics.worldStartY) * metrics.tilePx;
-  if (screenX < -20 || screenY < -20 || screenX > metrics.canvas.width + 20 || screenY > metrics.canvas.height + 20) return;
-  const pulse = 0.5 + (Math.sin(getMiningNow() / 120) * 0.5);
-  const radius = metrics.tilePx * 0.12;
-  const armLen = metrics.tilePx * 0.22;
+  if (screenX < -40 || screenY < -40 || screenX > metrics.canvas.width + 40 || screenY > metrics.canvas.height + 40) return;
+  const maxRadius = metrics.tilePx * 0.35;
+  const radius = maxRadius * progress;
+  const alpha = 1.0 - progress;
   context.save();
-  context.globalAlpha = 0.5 + (pulse * 0.4);
+  context.globalAlpha = alpha * 0.7;
   context.strokeStyle = "#fff8b4";
-  context.lineWidth = Math.max(2, metrics.tilePx * 0.04);
+  context.lineWidth = Math.max(1.5, metrics.tilePx * 0.03 * (1 - progress));
   context.beginPath();
-  context.moveTo(screenX - armLen, screenY);
-  context.lineTo(screenX - radius, screenY);
-  context.moveTo(screenX + radius, screenY);
-  context.lineTo(screenX + armLen, screenY);
-  context.moveTo(screenX, screenY - armLen);
-  context.lineTo(screenX, screenY - radius);
-  context.moveTo(screenX, screenY + radius);
-  context.lineTo(screenX, screenY + armLen);
+  context.arc(screenX, screenY, radius, 0, Math.PI * 2);
   context.stroke();
-  context.beginPath();
-  context.arc(screenX, screenY, radius * 0.35, 0, Math.PI * 2);
-  context.fillStyle = "#fff8b4";
-  context.fill();
   context.restore();
 }
 
