@@ -28,7 +28,12 @@ globalThis.__miningQueues ||= {};
 globalThis.__miningRuntimeStore ||= { scopes: {} };
 
 const REMOTE_MINING_BACKEND_URL = process.env.VERCEL === "1"
-  ? (process.env.MINING_BACKEND_URL || "http://46.62.159.126").replace(/\/+$/, "")
+  ? String(
+    process.env.BACKEND_PROXY_URL
+    || process.env.MINING_BACKEND_URL
+    || process.env.VITE_GAME_BACKEND_URL
+    || "https://46-62-159-126.sslip.io"
+  ).trim().replace(/\/+$/, "")
   : "";
 const MINING_RUNTIME_TTL_MS = 15 * 60 * 1000;
 const MINING_PERSIST_INTERVAL_MS = 400;

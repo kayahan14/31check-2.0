@@ -18,7 +18,12 @@ const DRAGON_SPEED_STAGES = [
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 globalThis.__dragonQueues ||= {};
 const REMOTE_DRAGON_BACKEND_URL = process.env.VERCEL === "1"
-  ? String(process.env.BACKEND_PROXY_URL || process.env.MINING_BACKEND_URL || process.env.VITE_GAME_BACKEND_URL || "").trim().replace(/\/+$/, "")
+  ? String(
+    process.env.BACKEND_PROXY_URL
+    || process.env.MINING_BACKEND_URL
+    || process.env.VITE_GAME_BACKEND_URL
+    || "https://46-62-159-126.sslip.io"
+  ).trim().replace(/\/+$/, "")
   : "";
 
 export default async function handler(req, res) {
