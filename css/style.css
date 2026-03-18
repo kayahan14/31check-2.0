@@ -1412,6 +1412,7 @@ svg { display: block; }
   display: flex;
   gap: 10px;
   max-width: min(460px, calc(100% - 28px));
+  pointer-events: none;
 }
 .mining-stage-overlay-left {
   top: 16px;
@@ -1487,6 +1488,12 @@ svg { display: block; }
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 28px 60px rgba(0, 0, 0, 0.28);
+  touch-action: none;
+  cursor: crosshair;
+  image-rendering: pixelated;
+}
+.mining-stage-overlay .mining-join-action {
+  pointer-events: auto;
 }
 .mining-objective-list,
 .mining-info-stack {

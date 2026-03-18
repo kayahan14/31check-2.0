@@ -80,7 +80,6 @@ const DRAGON_SPEED_STAGES = [
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const MINING_ACTION_TICK_MS = 170;
-const MINING_PATH_NODE_LIMIT = 5000;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
@@ -127,6 +126,7 @@ const state = {
   miningQueuedDirections: [],
   miningQueuedInteraction: null,
   miningTargetTile: null,
+  miningBufferedInput: null,
   isMessagesLoading: true,
   membersLoading: !MOCK_MODE,
   composerDraft: "",
@@ -1030,11 +1030,11 @@ function bindRuntimeUi() {
       await handleMiningUiAction(action);
     });
   });
-  const miningCanvas = document.getElementById("miningCanvas");
-  if (miningCanvas instanceof HTMLCanvasElement) {
-    miningCanvas.addEventListener("click", handleMiningCanvasClick);
-    renderMiningCanvas(miningCanvas);
-  }
+const miningCanvas = document.getElementById("miningCanvas");
+if (miningCanvas instanceof HTMLCanvasElement) {
+  miningCanvas.addEventListener("pointerdown", handleMiningCanvasClick);
+  renderMiningCanvas(miningCanvas);
+}
   const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
   if (dragonAutoInput) {
     const syncDragonAutoInput = () => {
@@ -2475,7 +2475,6 @@ function startMiningUiTicker() {
   stopMiningUiTicker();
   state.miningUiTickerHandle = window.setInterval(() => {
     if (!isCasinoMiningView()) return;
-    void advanceMiningQueuedAction();
     const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
     const now = Date.now();
     if ((phase === "active" || phase === "lobby") && (now - state.miningUiLastRenderAtMs) >= 850) {
@@ -2493,30 +2492,48 @@ function stopMiningUiTicker() {
 
 function applyMiningTransportPayload(payload, options = {}) {
   const { forceRender = false } = options;
-  const previousKey = JSON.stringify(state.miningSession?.content || null);
+  const previousKey = getMiningTransportRenderKey(state.miningSession, state.miningProfile);
   const nextSession = payload?.session
     ? {
       ...payload.session,
       content: normalizeMiningSession(payload.session.content)
     }
     : null;
-  state.miningSession = nextSession;
-  state.miningProfile = normalizeMiningProfile(payload?.profile, {
+  const nextProfile = normalizeMiningProfile(payload?.profile, {
     id: state.currentUser.id,
     name: state.currentUser.displayName
   });
+  state.miningSession = nextSession;
+  state.miningProfile = nextProfile;
   const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
   const player = state.miningSession?.content ? getMiningCurrentPlayer(state.miningSession.content, state.currentUser.id) : null;
   if (phase !== "active" || !player || player.status !== "active") {
     clearMiningQueuedActions();
+    state.miningBufferedInput = null;
   }
   window.render_game_to_text = () => renderMiningTextState(state.miningSession?.content || null, state.currentUser.id);
-  if (forceRender || previousKey !== JSON.stringify(state.miningSession?.content || null)) {
+  if (forceRender || previousKey !== getMiningTransportRenderKey(state.miningSession, nextProfile)) {
     if (isCasinoMiningView()) {
       state.miningUiLastRenderAtMs = Date.now();
       render();
     }
   }
+}
+
+function getMiningTransportRenderKey(sessionRecord, profile) {
+  const session = sessionRecord?.content || null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  return [
+    sessionRecord?.id || "none",
+    Number(sessionRecord?.serverCreatedAtMs || sessionRecord?.createdAtMs || 0),
+    Number(session?.revision || 0),
+    String(session?.status || "idle"),
+    Number(player?.x ?? -1),
+    Number(player?.y ?? -1),
+    Number(player?.integrity ?? -1),
+    Number(player?.runCoins ?? -1),
+    Number(profile?.walletCoins ?? -1)
+  ].join("|");
 }
 
 async function handleMiningUiAction(action) {
@@ -2574,6 +2591,13 @@ async function performMiningAction(action, meta = {}, options = {}) {
     return null;
   } finally {
     delete state.interactiveActionLocks["mining"];
+    const bufferedInput = state.miningBufferedInput;
+    if (bufferedInput) {
+      state.miningBufferedInput = null;
+      window.setTimeout(() => {
+        void dispatchMiningCanvasIntent(bufferedInput);
+      }, 0);
+    }
   }
 }
 
@@ -2662,7 +2686,7 @@ function renderMiningRealtimeView() {
           <div class="mining-stage-card mining-stage-card-full">
             <div class="mining-stage-overlay mining-stage-overlay-left">
               <div class="mining-stage-brand">Mining</div>
-              <div class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikla ve rota olustur. Yakin damar otomatik kirilir." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
+              <div class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikladigin yone tek adim ilerle. Yakin damar direkt kirilir." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
               <div class="mining-roster compact">${renderMiningRoster(session.players || [])}</div>
             </div>
             <div class="mining-stage-overlay mining-stage-overlay-right">
@@ -2680,9 +2704,9 @@ function renderMiningRealtimeView() {
             <div class="mining-stage-overlay mining-stage-overlay-bottom">
               <div class="mining-summary-chip">${escapeHtml(summaryPill)}</div>
               <div class="mining-stage-legend">
-                <span>Tikla: rota</span>
-                <span>Damar: otomatik yaklas + kaz</span>
-                <span>Kostebek: otomatik yaklas + vur</span>
+                <span>Tikla: tek adim</span>
+                <span>Damar: yakinsan kaz</span>
+                <span>Kostebek: yakinsan vur</span>
               </div>
             </div>
           </div>
@@ -2766,8 +2790,7 @@ function renderMiningCanvas(canvas) {
     return;
   }
 
-  const { originX, originY } = getMiningViewport(session, player);
-  const visibleSize = (MINING_VIEW_RADIUS * 2) + 1;
+  const { originX, originY, visibleSize } = getMiningViewport(session, player);
 
   for (let row = 0; row < visibleSize; row += 1) {
     for (let col = 0; col < visibleSize; col += 1) {
@@ -2813,8 +2836,6 @@ function renderMiningCanvas(canvas) {
     }
   }
 
-  drawMiningQueuedPath(context, session, originX, originY, player);
-
   for (const mole of session.moles || []) {
     if (mole.x < originX || mole.y < originY || mole.x >= originX + visibleSize || mole.y >= originY + visibleSize) continue;
     const px = (mole.x - originX) * MINING_TILE_SIZE;
@@ -2842,6 +2863,7 @@ function renderMiningCanvas(canvas) {
 }
 
 function handleMiningCanvasClick(event) {
+  event.preventDefault();
   const canvas = event.currentTarget;
   if (!(canvas instanceof HTMLCanvasElement)) return;
   const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
@@ -2858,40 +2880,13 @@ function handleMiningCanvasClick(event) {
   const { originX, originY } = getMiningViewport(session, player);
   const targetX = originX + col;
   const targetY = originY + row;
-  const tile = getMiningTile(session.map, targetX, targetY);
-  if (!tile) return;
-
-  const mole = (session.moles || []).find((entry) => entry.x === targetX && entry.y === targetY);
   clearMiningQueuedActions();
-  if (mole) {
-    if (Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1) {
-      void performMiningAction("attack", { targetId: mole.id });
-      return;
-    }
-    const queuedPath = findMiningApproachPath(session, player, targetX, targetY, "mole");
-    if (queuedPath.length) {
-      queueMiningPath(queuedPath, { action: "attack", meta: { targetId: mole.id } }, { x: targetX, y: targetY, kind: "mole" });
-      void advanceMiningQueuedAction();
-    }
+  const intent = { targetX, targetY };
+  if (state.interactiveActionLocks["mining"]) {
+    state.miningBufferedInput = intent;
     return;
   }
-  if (tile.kind === "wall" && Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1) {
-    void performMiningAction("mine", { x: targetX, y: targetY });
-    return;
-  }
-  if (tile.kind === "wall") {
-    const queuedPath = findMiningApproachPath(session, player, targetX, targetY, "wall");
-    if (queuedPath.length) {
-      queueMiningPath(queuedPath, { action: "mine", meta: { x: targetX, y: targetY } }, { x: targetX, y: targetY, kind: "wall" });
-      void advanceMiningQueuedAction();
-    }
-    return;
-  }
-  const pathDirections = findMiningPath(session, { x: player.x, y: player.y }, { x: targetX, y: targetY });
-  if (pathDirections.length) {
-    queueMiningPath(pathDirections, null, { x: targetX, y: targetY, kind: tile.kind });
-    void advanceMiningQueuedAction();
-  }
+  void dispatchMiningCanvasIntent(intent);
 }
 
 function getMiningDirection(from, to) {
@@ -2928,6 +2923,50 @@ function clearMiningQueuedActions() {
   state.miningQueuedDirections = [];
   state.miningQueuedInteraction = null;
   state.miningTargetTile = null;
+}
+
+async function dispatchMiningCanvasIntent(intent) {
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!session || !player || player.status !== "active" || !session.map) return;
+  const targetX = Math.round(Number(intent?.targetX));
+  const targetY = Math.round(Number(intent?.targetY));
+  const tile = getMiningTile(session.map, targetX, targetY);
+  if (!tile) return;
+
+  const mole = (session.moles || []).find((entry) => entry.x === targetX && entry.y === targetY);
+  const isAdjacent = Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1;
+
+  if (mole) {
+    if (isAdjacent) {
+      await performMiningAction("attack", { targetId: mole.id }, { silent: true });
+      return;
+    }
+    const direction = getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
+    if (direction) {
+      await performMiningAction("move", { direction }, { silent: true });
+    }
+    return;
+  }
+
+  if (tile.kind === "wall") {
+    if (isAdjacent) {
+      await performMiningAction("mine", { x: targetX, y: targetY }, { silent: true });
+      return;
+    }
+    const direction = getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
+    if (direction) {
+      await performMiningAction("move", { direction }, { silent: true });
+    }
+    return;
+  }
+
+  const direction = isAdjacent
+    ? getMiningDirection(player, { x: targetX, y: targetY })
+    : getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
+  if (direction) {
+    await performMiningAction("move", { direction }, { silent: true });
+  }
 }
 
 function queueMiningPath(pathDirections, interaction = null, targetTile = null) {
@@ -2986,8 +3025,15 @@ function getMiningViewport(session, player) {
   const mapSize = Number(session?.map?.size || 0);
   const visibleSize = (MINING_VIEW_RADIUS * 2) + 1;
   const fallback = Math.max(0, Math.floor(mapSize / 2) - MINING_VIEW_RADIUS);
-  if (!player || !mapSize) {
+  if (!mapSize) {
     return { originX: fallback, originY: fallback, visibleSize };
+  }
+  if (!player) {
+    return {
+      originX: Number.isInteger(session?.map?.originX) ? session.map.originX : fallback,
+      originY: Number.isInteger(session?.map?.originY) ? session.map.originY : fallback,
+      visibleSize: Number.isInteger(session?.map?.windowSize) && session.map.windowSize > 0 ? session.map.windowSize : visibleSize
+    };
   }
   return {
     originX: clamp(player.x - MINING_VIEW_RADIUS, 0, Math.max(0, mapSize - visibleSize)),

@@ -10,6 +10,9 @@ export const MINING_EVENT_LIFETIME_MS = 75 * 1000;
 export const MINING_VIEW_RADIUS = 13;
 export const MINING_TILE_SIZE = 34;
 export const MINING_DEFAULT_WALLET_COINS = 500;
+const MINING_MAP_BASE_SIZE = 385;
+const MINING_MAP_PLAYER_GROWTH = 24;
+const MINING_MAP_MAX_SIZE = 513;
 
 const FLOOR_TILE = { kind: "floor", oreId: "", hp: 0, maxHp: 0, reward: 0, requiredTier: 0, moleChance: 0 };
 const MINING_TRANSPORT_MAP_VERSION = 1;
@@ -155,12 +158,12 @@ export function normalizeMiningSession(content, now = Date.now()) {
   return game;
 }
 
-export function createMiningTransportSession(session, now = Date.now()) {
+export function createMiningTransportSession(session, now = Date.now(), playerId = "") {
   const game = normalizeMiningSession(session, now);
   return {
     ...game,
     isTransportSnapshot: true,
-    map: serializeMiningTransportMap(game.map)
+    map: serializeMiningTransportMap(game.map, getMiningTransportWindow(game, playerId))
   };
 }
 
@@ -181,6 +184,12 @@ export function getMiningPhase(game, now = Date.now()) {
 export function getMiningTile(map, x, y) {
   if (!map || !Array.isArray(map.tiles) || !Number.isInteger(map.size)) return null;
   if (x < 0 || y < 0 || x >= map.size || y >= map.size) return null;
+  if (Number.isInteger(map.windowSize) && map.windowSize > 0) {
+    if (x < map.originX || y < map.originY || x >= map.originX + map.windowSize || y >= map.originY + map.windowSize) {
+      return null;
+    }
+    return map.tiles[((y - map.originY) * map.windowSize) + (x - map.originX)] || null;
+  }
   return map.tiles[(y * map.size) + x] || null;
 }
 
@@ -685,6 +694,9 @@ function normalizeMiningMap(map) {
   if (!Array.isArray(map.tiles) || !Number.isInteger(map.size)) return null;
   return {
     size: map.size,
+    originX: Math.max(0, Math.round(Number(map.originX || 0))),
+    originY: Math.max(0, Math.round(Number(map.originY || 0))),
+    windowSize: Math.max(0, Math.round(Number(map.windowSize || 0))),
     tiles: map.tiles.map((entry) => normalizeMiningTile(entry))
   };
 }
@@ -704,18 +716,33 @@ function normalizeMiningTile(tile) {
   };
 }
 
-function serializeMiningTransportMap(map) {
+function serializeMiningTransportMap(map, visibleWindow = null) {
   if (!map || !Array.isArray(map.tiles) || !Number.isInteger(map.size)) return null;
+  const originX = Math.max(0, Math.round(Number(visibleWindow?.originX || 0)));
+  const originY = Math.max(0, Math.round(Number(visibleWindow?.originY || 0)));
+  const windowSize = Math.max(1, Math.round(Number(visibleWindow?.size || map.size)));
+  const encodedTiles = [];
+  for (let y = originY; y < Math.min(map.size, originY + windowSize); y += 1) {
+    for (let x = originX; x < Math.min(map.size, originX + windowSize); x += 1) {
+      encodedTiles.push(encodeMiningTransportTile(getMiningTile(map, x, y)));
+    }
+  }
   return {
     size: map.size,
+    originX,
+    originY,
+    windowSize,
     transportVersion: MINING_TRANSPORT_MAP_VERSION,
-    tilesEncoded: map.tiles.map((tile) => encodeMiningTransportTile(tile)).join("")
+    tilesEncoded: encodedTiles.join("")
   };
 }
 
 function decodeMiningTransportMap(map) {
   const encoded = String(map?.tilesEncoded || "");
   const size = Math.max(0, Math.round(Number(map?.size || 0)));
+  const originX = Math.max(0, Math.round(Number(map?.originX || 0)));
+  const originY = Math.max(0, Math.round(Number(map?.originY || 0)));
+  const windowSize = Math.max(1, Math.round(Number(map?.windowSize || size)));
   if (!size || !encoded) return null;
   const tiles = [];
   for (let index = 0; index < encoded.length; index += MINING_TILE_TOKEN_SIZE) {
@@ -723,6 +750,9 @@ function decodeMiningTransportMap(map) {
   }
   return {
     size,
+    originX,
+    originY,
+    windowSize,
     tiles
   };
 }
@@ -774,10 +804,30 @@ function fromBase36Digit(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function getMiningTransportWindow(game, playerId = "") {
+  const focusPlayer = getMiningCurrentPlayer(game, playerId)
+    || (game?.players || []).find((entry) => entry.status === "active")
+    || null;
+  if (focusPlayer) {
+    return getMiningVisibleTiles(game, focusPlayer.id, MINING_VIEW_RADIUS);
+  }
+
+  const mapSize = Math.max(1, Math.round(Number(game?.map?.size || 1)));
+  const size = Math.min(mapSize, (MINING_VIEW_RADIUS * 2) + 1);
+  const center = Math.floor(mapSize / 2);
+  const maxOrigin = Math.max(0, mapSize - size);
+  return {
+    originX: Math.max(0, Math.min(maxOrigin, center - Math.floor(size / 2))),
+    originY: Math.max(0, Math.min(maxOrigin, center - Math.floor(size / 2))),
+    size,
+    tiles: []
+  };
+}
+
 function generateMiningMap(playerCount) {
-  const size = Math.min(321, 241 + (Math.max(1, playerCount) * 16));
+  const size = Math.min(MINING_MAP_MAX_SIZE, MINING_MAP_BASE_SIZE + (Math.max(1, playerCount) * MINING_MAP_PLAYER_GROWTH));
   const center = Math.floor(size / 2);
-  const spawnRadius = 4;
+  const spawnRadius = 1;
   const tiles = [];
   const exitCandidates = [];
 

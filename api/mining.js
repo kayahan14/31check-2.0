@@ -92,7 +92,7 @@ async function getMiningSnapshot(scopeKey, actor) {
   const session = await syncMiningSessionRecord(scopeKey, now);
   const profile = actor?.id ? await ensureMiningProfileRecord(scopeKey, actor, now) : null;
   return {
-    session,
+    session: session ? { ...session, content: createMiningTransportSession(session.content, now, actor?.id || "") } : null,
     profile: profile ? normalizeMiningProfile(profile.content, actor) : null,
     serverNowMs: now
   };
@@ -112,7 +112,7 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
     if (sessionRecord && (sessionRecord.content.status === "lobby" || sessionRecord.content.status === "active")) {
       const joined = joinMiningSession(sessionRecord.content, normalizedActor, profile.loadout, now);
       const nextSession = joined.changed ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
-      return makeResult(nextSession, profile, now, joined.reason || "");
+      return makeResult(nextSession, profile, now, joined.reason || "", normalizedActor.id);
     }
 
     const session = createMiningSession(normalizedActor, profile, now);
@@ -127,20 +127,20 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
       type: MINING_TYPE,
       content: session
     });
-    return makeResult(created, profile, now);
+    return makeResult(created, profile, now, "", normalizedActor.id);
   }
 
   if (action === "join_lobby") {
     if (!sessionRecord || (sessionRecord.content.status !== "lobby" && sessionRecord.content.status !== "active")) {
-      return makeResult(sessionRecord, profile, now, "inactive");
+      return makeResult(sessionRecord, profile, now, "inactive", normalizedActor.id);
     }
     const joined = joinMiningSession(sessionRecord.content, normalizedActor, profile.loadout, now);
     const nextSession = joined.changed ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
-    return makeResult(nextSession, profile, now, joined.reason || "");
+    return makeResult(nextSession, profile, now, joined.reason || "", normalizedActor.id);
   }
 
   if (!sessionRecord || sessionRecord.content.status !== "active") {
-    return makeResult(sessionRecord, profile, now, "inactive");
+    return makeResult(sessionRecord, profile, now, "inactive", normalizedActor.id);
   }
 
   const session = sessionRecord.content;
@@ -165,7 +165,7 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
       }, normalizedActor);
       const storedProfile = await updateMiningProfileRecord(scopeKey, profileRecord, nextProfile, normalizedActor, now);
       const nextSession = await writeMiningSession(scopeKey, sessionRecord, session, now);
-      return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode);
+      return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode, normalizedActor.id);
     }
   } else if (action === "mine") {
     const result = mineMiningTile(session, normalizedActor.id, Math.round(Number(meta.x)), Math.round(Number(meta.y)), now);
@@ -192,7 +192,7 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
       }, normalizedActor);
       const storedProfile = await updateMiningProfileRecord(scopeKey, profileRecord, nextProfile, normalizedActor, now);
       const nextSession = changed ? await writeMiningSession(scopeKey, sessionRecord, session, now) : sessionRecord;
-      return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode);
+      return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode, normalizedActor.id);
     }
   }
 
@@ -208,11 +208,11 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
     }, normalizedActor);
     const storedProfile = await updateMiningProfileRecord(scopeKey, profileRecord, collapsedProfile, normalizedActor, now);
     const nextSession = changed ? await writeMiningSession(scopeKey, sessionRecord, session, now) : sessionRecord;
-    return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode);
+    return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode, normalizedActor.id);
   }
 
   const nextSession = changed ? await writeMiningSession(scopeKey, sessionRecord, session, now) : sessionRecord;
-  return makeResult(nextSession, profile, now, errorCode);
+  return makeResult(nextSession, profile, now, errorCode, normalizedActor.id);
 }
 
 async function syncMiningSessionRecord(scopeKey, now = Date.now()) {
@@ -300,9 +300,9 @@ async function writeMiningSession(scopeKey, record, session, now) {
   });
 }
 
-function makeResult(sessionRecord, profile, now, errorCode = "") {
+function makeResult(sessionRecord, profile, now, errorCode = "", playerId = "") {
   return {
-    session: sessionRecord ? { ...sessionRecord, content: createMiningTransportSession(sessionRecord.content, now) } : null,
+    session: sessionRecord ? { ...sessionRecord, content: createMiningTransportSession(sessionRecord.content, now, playerId) } : null,
     profile,
     serverNowMs: now,
     errorCode
