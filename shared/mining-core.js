@@ -124,7 +124,7 @@ export function createMiningSession(actor, profile, now = Date.now()) {
   return session;
 }
 
-export function normalizeMiningSession(content, now = Date.now()) {
+export function hydrateMiningRuntimeSession(content, now = Date.now()) {
   const game = structuredClone(content || {});
   game.game = "mining";
   game.isTransportSnapshot = Boolean(game.isTransportSnapshot);
@@ -156,11 +156,39 @@ export function normalizeMiningSession(content, now = Date.now()) {
     simulateMiningSession(game, now);
   }
 
+  if (!game.isTransportSnapshot) {
+    game._runtimeHydrated = true;
+  }
+
   return game;
 }
 
+export function advanceMiningSession(content, now = Date.now()) {
+  if (!content) return null;
+  const game = content._runtimeHydrated && !content.isTransportSnapshot
+    ? content
+    : hydrateMiningRuntimeSession(content, now);
+
+  if (game.status === "lobby") {
+    game.joinDeadlineMs = now;
+    startMiningRun(game, now);
+  }
+
+  if (game.status === "active") {
+    simulateMiningSession(game, now);
+  }
+
+  game._runtimeHydrated = true;
+  return game;
+}
+
+export function normalizeMiningSession(content, now = Date.now()) {
+  return hydrateMiningRuntimeSession(content, now);
+}
+
 export function createMiningTransportSession(session, now = Date.now(), playerId = "") {
-  const game = normalizeMiningSession(session, now);
+  const game = advanceMiningSession(session, now);
+  if (!game) return null;
   return {
     ...game,
     isTransportSnapshot: true,

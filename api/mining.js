@@ -3,17 +3,18 @@ import {
   MINING_PROFILE_TYPE,
   MINING_SHOP_ITEMS,
   MINING_TYPE,
+  advanceMiningSession,
   attackMiningMole,
   createMiningTransportSession,
   createMiningProfile,
   createMiningSession,
   extractMiningPlayer,
   getMiningCurrentPlayer,
+  hydrateMiningRuntimeSession,
   joinMiningSession,
   mineMiningTile,
   moveMiningPlayer,
-  normalizeMiningProfile,
-  normalizeMiningSession
+  normalizeMiningProfile
 } from "../shared/mining-core.js";
 import {
   getMiningProfileRecord as getStoredMiningProfileRecord,
@@ -23,6 +24,12 @@ import {
 } from "../server/mining-storage.js";
 
 globalThis.__miningQueues ||= {};
+globalThis.__miningRuntimeStore ||= { scopes: {} };
+
+const MINING_RUNTIME_TTL_MS = 15 * 60 * 1000;
+const MINING_PERSIST_INTERVAL_MS = 400;
+const MINING_CHECKPOINT_INTERVAL_MS = 2000;
+const MINING_STORAGE_REFRESH_MS = 1500;
 
 function normalizeMiningScopeKey(scopeKey) {
   const normalized = String(scopeKey || "local-preview");
@@ -98,10 +105,156 @@ async function withMiningQueue(scopeKey, worker) {
   return next;
 }
 
+function getMiningRuntime(scopeKey, now = Date.now()) {
+  const store = globalThis.__miningRuntimeStore;
+  const key = String(scopeKey || "local-preview");
+  pruneMiningRuntimeStore(now);
+  store.scopes[key] ||= {
+    sessionRecord: null,
+    profileRecords: {},
+    dirtySession: false,
+    dirtyProfiles: {},
+    lastPersistAtMs: 0,
+    lastCheckpointAtMs: 0,
+    lastSourceCheckAtMs: 0,
+    lastAccessAtMs: now
+  };
+  store.scopes[key].lastAccessAtMs = now;
+  return store.scopes[key];
+}
+
+function pruneMiningRuntimeStore(now = Date.now()) {
+  const store = globalThis.__miningRuntimeStore;
+  for (const [scopeKey, runtime] of Object.entries(store.scopes || {})) {
+    if ((now - Number(runtime?.lastAccessAtMs || 0)) > MINING_RUNTIME_TTL_MS) {
+      delete store.scopes[scopeKey];
+    }
+  }
+}
+
+function getRecordTimestamp(record) {
+  return Number(record?.serverCreatedAtMs || record?.createdAtMs || 0);
+}
+
+function isRecordNewer(nextRecord, currentRecord) {
+  return getRecordTimestamp(nextRecord) > getRecordTimestamp(currentRecord);
+}
+
+function markSessionDirty(runtime, now = Date.now()) {
+  runtime.dirtySession = true;
+  runtime.lastMutationAtMs = now;
+}
+
+function markProfileDirty(runtime, userId, now = Date.now()) {
+  runtime.dirtyProfiles[String(userId || "")] = now;
+  runtime.lastMutationAtMs = now;
+}
+
+async function ensureRuntimeSession(scopeKey, runtime, now = Date.now(), { forceRefresh = false } = {}) {
+  if (!runtime.sessionRecord) {
+    const stored = await getCurrentMiningSessionRecord(scopeKey);
+    runtime.lastSourceCheckAtMs = now;
+    if (stored) {
+      runtime.sessionRecord = {
+        ...stored,
+        content: hydrateMiningRuntimeSession(stored.content, now)
+      };
+      runtime.lastCheckpointAtMs = now;
+    }
+  } else if (!runtime.dirtySession && (forceRefresh || (now - runtime.lastSourceCheckAtMs) >= MINING_STORAGE_REFRESH_MS)) {
+    const stored = await getCurrentMiningSessionRecord(scopeKey);
+    runtime.lastSourceCheckAtMs = now;
+    if (isRecordNewer(stored, runtime.sessionRecord)) {
+      runtime.sessionRecord = stored
+        ? {
+          ...stored,
+          content: hydrateMiningRuntimeSession(stored.content, now)
+        }
+        : null;
+      runtime.lastCheckpointAtMs = now;
+    }
+  }
+
+  if (!runtime.sessionRecord?.content) return null;
+
+  advanceMiningSession(runtime.sessionRecord.content, now);
+  const activeSession = runtime.sessionRecord.content;
+  if (activeSession.status === "active" && (now - runtime.lastCheckpointAtMs) >= MINING_CHECKPOINT_INTERVAL_MS) {
+    markSessionDirty(runtime, now);
+    runtime.lastCheckpointAtMs = now;
+  }
+  return runtime.sessionRecord;
+}
+
+async function ensureRuntimeProfile(scopeKey, runtime, actor, now = Date.now()) {
+  const userId = String(actor?.id || "");
+  if (!userId) return null;
+
+  if (!runtime.profileRecords[userId]) {
+    const stored = await getMiningProfileRecord(scopeKey, userId);
+    if (stored) {
+      runtime.profileRecords[userId] = {
+        ...stored,
+        content: normalizeMiningProfile(stored.content, actor)
+      };
+    } else {
+      runtime.profileRecords[userId] = await saveMiningProfileRecord(scopeKey, userId, {
+        id: crypto.randomUUID(),
+        channelId: MINING_CHANNEL_ID,
+        author: actor.name,
+        avatar: actor.name,
+        avatarUrl: "",
+        createdAt: new Date(now).toISOString(),
+        createdAtMs: now,
+        type: MINING_PROFILE_TYPE,
+        content: createMiningProfile(actor)
+      });
+    }
+  } else {
+    runtime.profileRecords[userId] = {
+      ...runtime.profileRecords[userId],
+      content: normalizeMiningProfile(runtime.profileRecords[userId].content, actor)
+    };
+  }
+
+  return runtime.profileRecords[userId];
+}
+
+async function flushMiningRuntime(scopeKey, runtime, now = Date.now(), { force = false } = {}) {
+  const shouldFlushSession = Boolean(runtime.dirtySession && runtime.sessionRecord && (force || (now - runtime.lastPersistAtMs) >= MINING_PERSIST_INTERVAL_MS));
+  const dirtyProfileIds = Object.entries(runtime.dirtyProfiles)
+    .filter(([, dirtyAtMs]) => force || (now - Number(dirtyAtMs || 0)) >= MINING_PERSIST_INTERVAL_MS)
+    .map(([userId]) => userId);
+
+  if (!shouldFlushSession && !dirtyProfileIds.length) {
+    return;
+  }
+
+  if (shouldFlushSession && runtime.sessionRecord) {
+    runtime.sessionRecord = await writeMiningSession(scopeKey, runtime.sessionRecord, runtime.sessionRecord.content, now);
+    runtime.dirtySession = false;
+  }
+
+  for (const userId of dirtyProfileIds) {
+    const record = runtime.profileRecords[userId];
+    if (!record) {
+      delete runtime.dirtyProfiles[userId];
+      continue;
+    }
+    runtime.profileRecords[userId] = await saveMiningProfileRecord(scopeKey, userId, record);
+    delete runtime.dirtyProfiles[userId];
+  }
+
+  runtime.lastPersistAtMs = now;
+  runtime.lastSourceCheckAtMs = now;
+}
+
 async function getMiningSnapshot(scopeKey, actor) {
   const now = Date.now();
-  const session = await syncMiningSessionRecord(scopeKey, now);
-  const profile = actor?.id ? await ensureMiningProfileRecord(scopeKey, actor, now) : null;
+  const runtime = getMiningRuntime(scopeKey, now);
+  const session = await ensureRuntimeSession(scopeKey, runtime, now);
+  const profile = actor?.id ? await ensureRuntimeProfile(scopeKey, runtime, actor, now) : null;
+  await flushMiningRuntime(scopeKey, runtime, now);
   return {
     session: session ? { ...session, content: createMiningTransportSession(session.content, now, actor?.id || "") } : null,
     profile: profile ? normalizeMiningProfile(profile.content, actor) : null,
@@ -115,19 +268,24 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
     id: String(actor?.id || "user"),
     name: String(actor?.name || "Oyuncu")
   };
-  const profileRecord = await ensureMiningProfileRecord(scopeKey, normalizedActor, now);
+  const runtime = getMiningRuntime(scopeKey, now);
+  const profileRecord = await ensureRuntimeProfile(scopeKey, runtime, normalizedActor, now);
   const profile = normalizeMiningProfile(profileRecord.content, normalizedActor);
-  const sessionRecord = await syncMiningSessionRecord(scopeKey, now);
+  const sessionRecord = await ensureRuntimeSession(scopeKey, runtime, now, { forceRefresh: true });
 
   if (action === "start_lobby") {
     if (sessionRecord && (sessionRecord.content.status === "lobby" || sessionRecord.content.status === "active")) {
       const joined = joinMiningSession(sessionRecord.content, normalizedActor, profile.loadout, now);
-      const nextSession = joined.changed ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
-      return makeResult(nextSession, profile, now, joined.reason || "", normalizedActor.id);
+      if (joined.changed) {
+        runtime.sessionRecord = sessionRecord;
+        markSessionDirty(runtime, now);
+      }
+      await flushMiningRuntime(scopeKey, runtime, now, { force: joined.changed });
+      return makeResult(runtime.sessionRecord, profile, now, joined.reason || "", normalizedActor.id);
     }
 
     const session = createMiningSession(normalizedActor, profile, now);
-    const created = await saveMiningSessionRecord(scopeKey, {
+    runtime.sessionRecord = {
       id: crypto.randomUUID(),
       channelId: MINING_CHANNEL_ID,
       author: normalizedActor.name,
@@ -137,8 +295,10 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
       createdAtMs: now,
       type: MINING_TYPE,
       content: session
-    });
-    return makeResult(created, profile, now, "", normalizedActor.id);
+    };
+    markSessionDirty(runtime, now);
+    await flushMiningRuntime(scopeKey, runtime, now, { force: true });
+    return makeResult(runtime.sessionRecord, profile, now, "", normalizedActor.id);
   }
 
   if (action === "join_lobby") {
@@ -146,8 +306,12 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
       return makeResult(sessionRecord, profile, now, "inactive", normalizedActor.id);
     }
     const joined = joinMiningSession(sessionRecord.content, normalizedActor, profile.loadout, now);
-    const nextSession = joined.changed ? await writeMiningSession(scopeKey, sessionRecord, sessionRecord.content, now) : sessionRecord;
-    return makeResult(nextSession, profile, now, joined.reason || "", normalizedActor.id);
+    if (joined.changed) {
+      runtime.sessionRecord = sessionRecord;
+      markSessionDirty(runtime, now);
+    }
+    await flushMiningRuntime(scopeKey, runtime, now, { force: joined.changed });
+    return makeResult(runtime.sessionRecord, profile, now, joined.reason || "", normalizedActor.id);
   }
 
   if (!sessionRecord || sessionRecord.content.status !== "active") {
@@ -174,9 +338,12 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
           bestRunCoins: Math.max(profile.stats.bestRunCoins, Math.round(Number(result.awardedCoins || 0)))
         }
       }, normalizedActor);
-      const storedProfile = await updateMiningProfileRecord(scopeKey, profileRecord, nextProfile, normalizedActor, now);
-      const nextSession = await writeMiningSession(scopeKey, sessionRecord, session, now);
-      return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode, normalizedActor.id);
+      runtime.profileRecords[normalizedActor.id] = buildMiningProfileRecord(profileRecord, nextProfile, normalizedActor, now);
+      markProfileDirty(runtime, normalizedActor.id, now);
+      runtime.sessionRecord = sessionRecord;
+      markSessionDirty(runtime, now);
+      await flushMiningRuntime(scopeKey, runtime, now, { force: true });
+      return makeResult(runtime.sessionRecord, normalizeMiningProfile(runtime.profileRecords[normalizedActor.id].content, normalizedActor), now, errorCode, normalizedActor.id);
     }
   } else if (action === "mine") {
     const result = mineMiningTile(session, normalizedActor.id, Math.round(Number(meta.x)), Math.round(Number(meta.y)), now);
@@ -201,9 +368,14 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
           bestRunCoins: Math.max(profile.stats.bestRunCoins, Math.round(Number(result.awardedCoins || 0)))
         }
       }, normalizedActor);
-      const storedProfile = await updateMiningProfileRecord(scopeKey, profileRecord, nextProfile, normalizedActor, now);
-      const nextSession = changed ? await writeMiningSession(scopeKey, sessionRecord, session, now) : sessionRecord;
-      return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode, normalizedActor.id);
+      runtime.profileRecords[normalizedActor.id] = buildMiningProfileRecord(profileRecord, nextProfile, normalizedActor, now);
+      markProfileDirty(runtime, normalizedActor.id, now);
+      runtime.sessionRecord = sessionRecord;
+      if (changed) {
+        markSessionDirty(runtime, now);
+      }
+      await flushMiningRuntime(scopeKey, runtime, now, { force: true });
+      return makeResult(runtime.sessionRecord, normalizeMiningProfile(runtime.profileRecords[normalizedActor.id].content, normalizedActor), now, errorCode, normalizedActor.id);
     }
   }
 
@@ -217,61 +389,34 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
         collapses: profile.stats.collapses + 1
       }
     }, normalizedActor);
-    const storedProfile = await updateMiningProfileRecord(scopeKey, profileRecord, collapsedProfile, normalizedActor, now);
-    const nextSession = changed ? await writeMiningSession(scopeKey, sessionRecord, session, now) : sessionRecord;
-    return makeResult(nextSession, normalizeMiningProfile(storedProfile.content, normalizedActor), now, errorCode, normalizedActor.id);
+    runtime.profileRecords[normalizedActor.id] = buildMiningProfileRecord(profileRecord, collapsedProfile, normalizedActor, now);
+    markProfileDirty(runtime, normalizedActor.id, now);
+    runtime.sessionRecord = sessionRecord;
+    if (changed || session.status === "collapsed") {
+      markSessionDirty(runtime, now);
+    }
+    await flushMiningRuntime(scopeKey, runtime, now, { force: true });
+    return makeResult(runtime.sessionRecord, normalizeMiningProfile(runtime.profileRecords[normalizedActor.id].content, normalizedActor), now, errorCode, normalizedActor.id);
   }
 
-  const nextSession = changed ? await writeMiningSession(scopeKey, sessionRecord, session, now) : sessionRecord;
-  return makeResult(nextSession, profile, now, errorCode, normalizedActor.id);
-}
-
-async function syncMiningSessionRecord(scopeKey, now = Date.now()) {
-  const latest = await getCurrentMiningSessionRecord(scopeKey);
-  if (!latest) return null;
-
-  const normalized = normalizeMiningSession(latest.content, now);
-  if (JSON.stringify(normalized) === JSON.stringify(latest.content)) {
-    return { ...latest, content: normalized };
+  runtime.sessionRecord = sessionRecord;
+  if (changed) {
+    markSessionDirty(runtime, now);
   }
-
-  return writeMiningSession(scopeKey, latest, normalized, now);
+  await flushMiningRuntime(scopeKey, runtime, now);
+  return makeResult(runtime.sessionRecord, profile, now, errorCode, normalizedActor.id);
 }
 
 async function getCurrentMiningSessionRecord(scopeKey) {
   return getStoredMiningSessionRecord(scopeKey);
 }
 
-async function ensureMiningProfileRecord(scopeKey, actor, now = Date.now()) {
-  const latest = await getMiningProfileRecord(scopeKey, actor.id);
-  if (!latest) {
-    return saveMiningProfileRecord(scopeKey, actor.id, {
-      id: crypto.randomUUID(),
-      channelId: MINING_CHANNEL_ID,
-      author: actor.name,
-      avatar: actor.name,
-      avatarUrl: "",
-      createdAt: new Date(now).toISOString(),
-      createdAtMs: now,
-      type: MINING_PROFILE_TYPE,
-      content: createMiningProfile(actor)
-    });
-  }
-
-  const normalized = normalizeMiningProfile(latest.content, actor);
-  if (JSON.stringify(normalized) === JSON.stringify(latest.content)) {
-    return { ...latest, content: normalized };
-  }
-
-  return updateMiningProfileRecord(scopeKey, latest, normalized, actor, now);
-}
-
 async function getMiningProfileRecord(scopeKey, userId) {
   return getStoredMiningProfileRecord(scopeKey, userId);
 }
 
-async function updateMiningProfileRecord(scopeKey, record, profile, actor, now) {
-  return saveMiningProfileRecord(scopeKey, actor.id, {
+function buildMiningProfileRecord(record, profile, actor, now) {
+  return {
     ...record,
     author: actor.name,
     avatar: actor.name,
@@ -280,7 +425,7 @@ async function updateMiningProfileRecord(scopeKey, record, profile, actor, now) 
     serverCreatedAt: new Date(now).toISOString(),
     serverCreatedAtMs: now,
     content: normalizeMiningProfile(profile, actor)
-  });
+  };
 }
 
 async function writeMiningSession(scopeKey, record, session, now) {
@@ -290,7 +435,7 @@ async function writeMiningSession(scopeKey, record, session, now) {
     createdAtMs: now,
     serverCreatedAt: new Date(now).toISOString(),
     serverCreatedAtMs: now,
-    content: normalizeMiningSession(session, now)
+    content: advanceMiningSession(session, now)
   });
 }
 

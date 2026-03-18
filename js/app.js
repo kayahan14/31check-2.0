@@ -1048,18 +1048,12 @@ function bindRuntimeUi() {
       render();
     });
   });
-  app.querySelectorAll("[data-mining-action]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const action = button.dataset.miningAction;
-      if (!action) return;
-      await handleMiningUiAction(action);
-    });
-  });
-const miningCanvas = document.getElementById("miningCanvas");
-if (miningCanvas instanceof HTMLCanvasElement) {
-  miningCanvas.addEventListener("pointerdown", handleMiningCanvasClick);
-  renderMiningCanvas(miningCanvas);
-}
+  bindMiningActionButtons(app);
+  const miningCanvas = document.getElementById("miningCanvas");
+  if (miningCanvas instanceof HTMLCanvasElement) {
+    miningCanvas.addEventListener("pointerdown", handleMiningCanvasClick);
+    renderMiningCanvas(miningCanvas);
+  }
   const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
   if (dragonAutoInput) {
     const syncDragonAutoInput = () => {
@@ -2491,7 +2485,7 @@ function startMiningSessionSync() {
   state.miningSessionSyncHandle = window.setInterval(() => {
     if (!state.miningSession && !isCasinoMiningView()) return;
     void loadMiningState();
-  }, 700);
+  }, 300);
 }
 
 function stopMiningSessionSync() {
@@ -2506,9 +2500,11 @@ function startMiningUiTicker() {
     if (!isCasinoMiningView()) return;
     const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
     const now = Date.now();
-    if ((phase === "active" || phase === "lobby") && (now - state.miningUiLastRenderAtMs) >= 850) {
+    if (phase === "active" && (now - state.miningUiLastRenderAtMs) >= 300) {
       state.miningUiLastRenderAtMs = now;
-      render();
+      if (!updateMiningActiveStageDom({ repaintCanvas: false })) {
+        render();
+      }
     }
   }, MINING_ACTION_TICK_MS);
 }
@@ -2521,6 +2517,7 @@ function stopMiningUiTicker() {
 
 function applyMiningTransportPayload(payload, options = {}) {
   const { forceRender = false } = options;
+  const previousPhase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
   const previousKey = getMiningTransportRenderKey(state.miningSession, state.miningProfile);
   const nextSession = payload?.session
     ? {
@@ -2544,6 +2541,9 @@ function applyMiningTransportPayload(payload, options = {}) {
   if (forceRender || previousKey !== getMiningTransportRenderKey(state.miningSession, nextProfile)) {
     if (isCasinoMiningView()) {
       state.miningUiLastRenderAtMs = Date.now();
+      if (previousPhase === "active" && phase === "active" && updateMiningActiveStageDom({ repaintCanvas: true })) {
+        return;
+      }
       render();
     }
   }
@@ -2644,6 +2644,78 @@ function translateMiningError(errorCode) {
   return map[errorCode] || "";
 }
 
+function renderMiningStageJoinAction(player) {
+  const canJoin = !player && !["escaped", "collapsed"].includes(String(player?.status || ""));
+  return canJoin
+    ? `<button type="button" class="btn dragon-modal-action mining-join-action" data-mining-action="join_lobby">Katil</button>`
+    : "";
+}
+
+function renderMiningStageHudPills(session, activePlayer, now = Date.now()) {
+  const joinedCount = session?.players?.length || 0;
+  const collapseMsLeft = session?.collapseAtMs ? Math.max(0, session.collapseAtMs - now) : 0;
+  const hardMsLeft = session?.hardCollapseAtMs ? Math.max(0, session.hardCollapseAtMs - now) : MINING_TARGET_RUN_MS;
+  return `
+    <span class="mining-pill">Toplanan ${escapeHtml(formatCoinValue(activePlayer?.runCoins || 0))}</span>
+    <span class="mining-pill">Butunluk ${escapeHtml(`${Math.round(Number(activePlayer?.integrity ?? 100))}%`)}</span>
+    <span class="mining-pill">Katilim ${escapeHtml(String(joinedCount))}</span>
+    <span class="mining-pill">Cikis ${escapeHtml(String((session?.discoveredExitIds || []).length))}/2</span>
+    <span class="mining-pill">Hedef ${escapeHtml(formatDurationLabel(hardMsLeft))}</span>
+    <span class="mining-pill ${session?.collapseAtMs ? "is-danger" : ""}">${escapeHtml(session?.collapseAtMs ? `Cokus ${formatDurationLabel(collapseMsLeft)}` : "Cikis araniyor")}</span>
+  `;
+}
+
+function renderMiningSummaryText(session, now = Date.now()) {
+  if (session?.currentEvent) {
+    return `${session.currentEvent.label} ${formatDurationLabel(session.currentEvent.expiresAtMs - now)}`;
+  }
+  return session?.summary || "Magarada ilerle, damarlari kir, cikis ara.";
+}
+
+function bindMiningActionButtons(root = document) {
+  root.querySelectorAll("[data-mining-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.dataset.miningAction;
+      if (!action) return;
+      await handleMiningUiAction(action);
+    });
+  });
+}
+
+function updateMiningActiveStageDom({ repaintCanvas = false } = {}) {
+  if (!isCasinoMiningView()) return false;
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!session || getMiningPhase(session) !== "active") return false;
+
+  const subtitle = document.getElementById("miningStageSubtitle");
+  const roster = document.getElementById("miningRoster");
+  const hud = document.getElementById("miningStageHud");
+  const joinHost = document.getElementById("miningJoinActionHost");
+  const summary = document.getElementById("miningSummaryChip");
+  const canvas = document.getElementById("miningCanvas");
+
+  if (!subtitle || !roster || !hud || !joinHost || !summary || !(canvas instanceof HTMLCanvasElement)) {
+    return false;
+  }
+
+  const activePlayer = player && player.status === "active" ? player : null;
+  subtitle.textContent = activePlayer
+    ? "Tikladigin yone tek adim ilerle. Yakin damar direkt kirilir."
+    : "Aktif magara acik. Istedigin an iceri dalabilirsin.";
+  roster.innerHTML = renderMiningRoster(session.players || []);
+  hud.innerHTML = renderMiningStageHudPills(session, activePlayer);
+  joinHost.innerHTML = renderMiningStageJoinAction(player);
+  bindMiningActionButtons(joinHost);
+  summary.textContent = renderMiningSummaryText(session);
+
+  if (repaintCanvas) {
+    renderMiningCanvas(canvas);
+  }
+
+  return true;
+}
+
 function renderMiningRealtimeView() {
   const profile = normalizeMiningProfile(state.miningProfile, {
     id: state.currentUser.id,
@@ -2655,9 +2727,6 @@ function renderMiningRealtimeView() {
   const tab = state.miningViewTab || "entrance";
   const isActiveRun = phase === "active";
   const isFinished = phase === "finished" || phase === "collapsed";
-  const joinedCount = session?.players?.length || 0;
-  const collapseMsLeft = session?.collapseAtMs ? Math.max(0, session.collapseAtMs - Date.now()) : 0;
-  const hardMsLeft = session?.hardCollapseAtMs ? Math.max(0, session.hardCollapseAtMs - Date.now()) : MINING_TARGET_RUN_MS;
 
   if (state.miningStateLoading) {
     return `<section class="mining-screen"><div class="chat-loading"><div class="chat-loading-spinner"></div><div class="chat-loading-text">Mining yukleniyor...</div></div></section>`;
@@ -2702,12 +2771,8 @@ function renderMiningRealtimeView() {
   }
 
   const activePlayer = player && player.status === "active" ? player : null;
-  const joinAction = !activePlayer && !["escaped", "collapsed"].includes(String(player?.status || ""))
-    ? `<button type="button" class="btn dragon-modal-action mining-join-action" data-mining-action="join_lobby">Katil</button>`
-    : "";
-  const summaryPill = session.currentEvent
-    ? `${session.currentEvent.label} ${formatDurationLabel(session.currentEvent.expiresAtMs - Date.now())}`
-    : session.summary || "Magarada ilerle, damarlari kir, cikis ara.";
+  const joinAction = renderMiningStageJoinAction(player);
+  const summaryPill = renderMiningSummaryText(session);
   return `
     <section class="mining-screen mining-screen-active">
       <div class="mining-shell mining-shell-active">
@@ -2715,23 +2780,16 @@ function renderMiningRealtimeView() {
           <div class="mining-stage-card mining-stage-card-full">
             <div class="mining-stage-overlay mining-stage-overlay-left">
               <div class="mining-stage-brand">Mining</div>
-              <div class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikladigin yone tek adim ilerle. Yakin damar direkt kirilir." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
-              <div class="mining-roster compact">${renderMiningRoster(session.players || [])}</div>
+              <div id="miningStageSubtitle" class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikladigin yone tek adim ilerle. Yakin damar direkt kirilir." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
+              <div id="miningRoster" class="mining-roster compact">${renderMiningRoster(session.players || [])}</div>
             </div>
             <div class="mining-stage-overlay mining-stage-overlay-right">
-              <div class="mining-stage-hud">
-                <span class="mining-pill">Toplanan ${escapeHtml(formatCoinValue(activePlayer?.runCoins || 0))}</span>
-                <span class="mining-pill">Butunluk ${escapeHtml(`${Math.round(Number(activePlayer?.integrity ?? 100))}%`)}</span>
-                <span class="mining-pill">Katilim ${escapeHtml(String(joinedCount))}</span>
-                <span class="mining-pill">Cikis ${escapeHtml(String((session.discoveredExitIds || []).length))}/2</span>
-                <span class="mining-pill">Hedef ${escapeHtml(formatDurationLabel(hardMsLeft))}</span>
-                <span class="mining-pill ${session.collapseAtMs ? "is-danger" : ""}">${escapeHtml(session.collapseAtMs ? `Cokus ${formatDurationLabel(collapseMsLeft)}` : "Cikis araniyor")}</span>
-              </div>
-              ${joinAction}
+              <div id="miningStageHud" class="mining-stage-hud">${renderMiningStageHudPills(session, activePlayer)}</div>
+              <div id="miningJoinActionHost">${joinAction}</div>
             </div>
             <canvas id="miningCanvas" class="mining-canvas" width="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}" height="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}"></canvas>
             <div class="mining-stage-overlay mining-stage-overlay-bottom">
-              <div class="mining-summary-chip">${escapeHtml(summaryPill)}</div>
+              <div id="miningSummaryChip" class="mining-summary-chip">${escapeHtml(summaryPill)}</div>
               <div class="mining-stage-legend">
                 <span>Tikla: tek adim</span>
                 <span>Damar: yakinsan kaz</span>
@@ -2889,6 +2947,8 @@ function renderMiningCanvas(canvas) {
     context.textAlign = "center";
     context.fillText(entry.name.slice(0, 3).toUpperCase(), px + (MINING_TILE_SIZE / 2), py + MINING_TILE_SIZE - 6);
   }
+
+  drawMiningQueuedPath(context, session, originX, originY, player);
 }
 
 function handleMiningCanvasClick(event) {
@@ -2910,6 +2970,8 @@ function handleMiningCanvasClick(event) {
   const targetX = originX + col;
   const targetY = originY + row;
   clearMiningQueuedActions();
+  state.miningTargetTile = { x: targetX, y: targetY };
+  renderMiningCanvas(canvas);
   const intent = { targetX, targetY };
   if (state.interactiveActionLocks["mining"]) {
     state.miningBufferedInput = intent;
