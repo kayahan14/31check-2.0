@@ -1,4 +1,5 @@
 import { head, put } from "@vercel/blob";
+import { appendMessage, listScopeMessages, updateMessage } from "./storage.js";
 
 const SESSION_PATH = "session.json";
 globalThis.__miningBlobFallbackStore ||= { sessions: {}, profiles: {} };
@@ -47,6 +48,9 @@ async function fetchBlobJson(pathname) {
     if (normalized.includes("not found") || normalized.includes("does not exist")) {
       return null;
     }
+    if (normalized.includes("suspended")) {
+      return null;
+    }
     throw error;
   }
 }
@@ -75,20 +79,54 @@ async function writeBlobJson(pathname, payload) {
 
 export async function getMiningSessionRecord(scopeKey) {
   const record = await fetchBlobJson(sessionPath(scopeKey));
-  return record?.payload || null;
+  if (record?.payload) return record.payload;
+  const sessions = await listScopeMessages(scopeKey, {
+    channelId: "casino:mining",
+    messageTypes: ["mining_session"],
+    limit: 1
+  });
+  return sessions[0] || null;
 }
 
 export async function saveMiningSessionRecord(scopeKey, sessionRecord) {
-  await writeBlobJson(sessionPath(scopeKey), sessionRecord);
-  return sessionRecord;
+  try {
+    await writeBlobJson(sessionPath(scopeKey), sessionRecord);
+    return sessionRecord;
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (!message.includes("suspended")) throw error;
+  }
+
+  const existing = sessionRecord?.id ? await getMiningSessionRecord(scopeKey) : null;
+  if (existing?.id) {
+    return updateMessage(scopeKey, existing.id, sessionRecord);
+  }
+  return appendMessage(scopeKey, sessionRecord.channelId, sessionRecord);
 }
 
 export async function getMiningProfileRecord(scopeKey, userId) {
   const record = await fetchBlobJson(profilePath(scopeKey, userId));
-  return record?.payload || null;
+  if (record?.payload) return record.payload;
+  const profiles = await listScopeMessages(scopeKey, {
+    channelId: "casino:mining",
+    messageTypes: ["mining_profile"],
+    limit: 20
+  });
+  return profiles.find((entry) => String(entry?.content?.userId || "") === String(userId || "")) || null;
 }
 
 export async function saveMiningProfileRecord(scopeKey, userId, profileRecord) {
-  await writeBlobJson(profilePath(scopeKey, userId), profileRecord);
-  return profileRecord;
+  try {
+    await writeBlobJson(profilePath(scopeKey, userId), profileRecord);
+    return profileRecord;
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (!message.includes("suspended")) throw error;
+  }
+
+  const existing = await getMiningProfileRecord(scopeKey, userId);
+  if (existing?.id) {
+    return updateMessage(scopeKey, existing.id, profileRecord);
+  }
+  return appendMessage(scopeKey, profileRecord.channelId, profileRecord);
 }
