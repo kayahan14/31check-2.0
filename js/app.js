@@ -3267,7 +3267,7 @@ function renderMiningRealtimeView() {
                 <strong>Yeni magara hazirla</strong>
                 <p>Magara kapanmadan cikabilirsen coinler cebe gider. Cikis bulunduğu anda geri sayim baslar.</p>
               </div>
-              <button type="button" class="btn dragon-modal-action" data-mining-action="start_lobby">Magaayi Ac</button>
+              <button type="button" class="btn dragon-modal-action" data-mining-action="start_lobby">test</button>
               ${session ? `<div class="mining-summary-chip ${phase === "collapsed" ? "is-loss" : "is-win"}">${escapeHtml(session.summary || "Son seans tamamlandi.")}</div>` : ""}
             </div>
             <div class="mining-card">
