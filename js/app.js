@@ -2843,6 +2843,9 @@ function startMiningUiTicker() {
   state.miningUiTickerHandle = window.setInterval(() => {
     if (!isCasinoMiningView()) return;
     const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
+    if (phase === "active") {
+      void advanceMiningQueuedAction();
+    }
     const now = getMiningNow();
     if (phase === "active" && (now - state.miningUiLastRenderAtMs) >= 300) {
       state.miningUiLastRenderAtMs = Date.now();
@@ -2983,13 +2986,13 @@ function tickMiningCanvasFrame(frameAtMs) {
 }
 
 function advanceMiningVisualState(deltaMs) {
-  const blend = 1 - Math.exp(-deltaMs / 90);
+  const blend = 1 - Math.exp(-deltaMs / 62);
   for (const entry of Object.values(state.miningVisualPlayers || {})) {
     if (!entry) continue;
     entry.x += (entry.targetX - entry.x) * blend;
     entry.y += (entry.targetY - entry.y) * blend;
-    if (Math.abs(entry.targetX - entry.x) < 0.002) entry.x = entry.targetX;
-    if (Math.abs(entry.targetY - entry.y) < 0.002) entry.y = entry.targetY;
+    if (Math.abs(entry.targetX - entry.x) < 0.0015) entry.x = entry.targetX;
+    if (Math.abs(entry.targetY - entry.y) < 0.0015) entry.y = entry.targetY;
   }
 
   const localVisual = state.miningVisualPlayers[state.currentUser.id] || null;
@@ -2998,7 +3001,7 @@ function advanceMiningVisualState(deltaMs) {
   const motionY = clamp(localVisual.targetY - localVisual.y, -1, 1);
   const leadX = motionX * 0.22;
   const leadY = motionY * 0.22;
-  const cameraBlend = 1 - Math.exp(-deltaMs / 150);
+  const cameraBlend = 1 - Math.exp(-deltaMs / 105);
   state.miningCameraX += ((localVisual.x + leadX) - state.miningCameraX) * cameraBlend;
   state.miningCameraY += ((localVisual.y + leadY) - state.miningCameraY) * cameraBlend;
 }
@@ -3045,6 +3048,9 @@ async function performMiningAction(action, meta = {}, options = {}) {
   if (state.interactiveActionLocks["mining"]) return;
   state.interactiveActionLocks["mining"] = true;
   try {
+    if (action === "move") {
+      applyOptimisticMiningMove(meta.direction);
+    }
     const response = await fetch(buildGameApiUrl("/api/mining"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3155,7 +3161,7 @@ function updateMiningActiveStageDom({ repaintCanvas = false } = {}) {
 
   const activePlayer = player && player.status === "active" ? player : null;
   subtitle.textContent = activePlayer
-    ? "Tikladigin yone tek adim ilerle. Yakin damar direkt kirilir."
+    ? "Tikladigin hedefe akici sekilde ilerle. Damara vurunca kendin kazmaya devam edersin."
     : "Aktif magara acik. Istedigin an iceri dalabilirsin.";
   roster.innerHTML = renderMiningRoster(session.players || []);
   hud.innerHTML = renderMiningStageHudPills(session, activePlayer);
@@ -3234,7 +3240,7 @@ function renderMiningRealtimeView() {
           <div class="mining-stage-card mining-stage-card-full">
             <div class="mining-stage-overlay mining-stage-overlay-left">
               <div class="mining-stage-brand">Mining</div>
-              <div id="miningStageSubtitle" class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikladigin yone tek adim ilerle. Yakin damar direkt kirilir." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
+              <div id="miningStageSubtitle" class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikladigin hedefe akici sekilde ilerle. Damara vurunca kendin kazmaya devam edersin." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
               <div id="miningRoster" class="mining-roster compact">${renderMiningRoster(session.players || [])}</div>
             </div>
             <div class="mining-stage-overlay mining-stage-overlay-right">
@@ -3245,8 +3251,8 @@ function renderMiningRealtimeView() {
             <div class="mining-stage-overlay mining-stage-overlay-bottom">
               <div id="miningSummaryChip" class="mining-summary-chip">${escapeHtml(summaryPill)}</div>
               <div class="mining-stage-legend">
-                <span>Tikla: tek adim</span>
-                <span>Damar: yakinsan kaz</span>
+                <span>Tikla: hedefe yurur</span>
+                <span>Damar: otomatik kaz</span>
                 <span>Kostebek: yakinsan vur</span>
               </div>
             </div>
@@ -3386,7 +3392,7 @@ function handleMiningCanvasClick(event) {
   clearMiningQueuedActions();
   state.miningTargetTile = { x: targetX, y: targetY };
   requestMiningCanvasFrame();
-  const intent = { targetX, targetY };
+  const intent = { targetX, targetY, forceReplan: true };
   if (state.interactiveActionLocks["mining"]) {
     state.miningBufferedInput = intent;
     return;
@@ -3413,6 +3419,30 @@ function getMiningDirection(from, to) {
   if (to.x === from.x - 1 && to.y === from.y) return "left";
   if (to.x === from.x + 1 && to.y === from.y) return "right";
   return "";
+}
+
+function getMiningDirectionDelta(direction) {
+  if (direction === "up") return { dx: 0, dy: -1 };
+  if (direction === "down") return { dx: 0, dy: 1 };
+  if (direction === "left") return { dx: -1, dy: 0 };
+  if (direction === "right") return { dx: 1, dy: 0 };
+  return { dx: 0, dy: 0 };
+}
+
+function applyOptimisticMiningMove(direction) {
+  const localVisual = state.miningVisualPlayers[state.currentUser.id];
+  const session = state.miningSession?.content || null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!localVisual || !player) return;
+  const { dx, dy } = getMiningDirectionDelta(direction);
+  if (!dx && !dy) return;
+  const nextX = Number(player.x) + dx;
+  const nextY = Number(player.y) + dy;
+  const tile = session?.map ? getMiningTile(session.map, nextX, nextY) : null;
+  if (!(tile?.kind === "floor" || tile?.kind === "exit")) return;
+  localVisual.targetX = nextX;
+  localVisual.targetY = nextY;
+  localVisual.facing = direction;
 }
 
 function getMiningStepDirectionTowardTarget(session, player, targetX, targetY) {
@@ -3449,42 +3479,10 @@ async function dispatchMiningCanvasIntent(intent) {
   if (!session || !player || player.status !== "active" || !session.map) return;
   const targetX = Math.round(Number(intent?.targetX));
   const targetY = Math.round(Number(intent?.targetY));
-  const tile = getMiningTile(session.map, targetX, targetY);
-  if (!tile) return;
-
-  const mole = (session.moles || []).find((entry) => entry.x === targetX && entry.y === targetY);
-  const isAdjacent = Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1;
-
-  if (mole) {
-    if (isAdjacent) {
-      await performMiningAction("attack", { targetId: mole.id }, { silent: true });
-      return;
-    }
-    const direction = getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
-    if (direction) {
-      await performMiningAction("move", { direction }, { silent: true });
-    }
-    return;
+  if (intent?.forceReplan || !state.miningQueuedDirections.length) {
+    syncMiningQueuedPlan(session, player, { x: targetX, y: targetY });
   }
-
-  if (tile.kind === "wall") {
-    if (isAdjacent) {
-      await performMiningAction("mine", { x: targetX, y: targetY }, { silent: true });
-      return;
-    }
-    const direction = getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
-    if (direction) {
-      await performMiningAction("move", { direction }, { silent: true });
-    }
-    return;
-  }
-
-  const direction = isAdjacent
-    ? getMiningDirection(player, { x: targetX, y: targetY })
-    : getMiningStepDirectionTowardTarget(session, player, targetX, targetY);
-  if (direction) {
-    await performMiningAction("move", { direction }, { silent: true });
-  }
+  await advanceMiningQueuedAction();
 }
 
 function queueMiningPath(pathDirections, interaction = null, targetTile = null) {
@@ -3500,6 +3498,10 @@ async function advanceMiningQueuedAction() {
   if (!session || getMiningPhase(session) !== "active" || !player || player.status !== "active") {
     clearMiningQueuedActions();
     return;
+  }
+
+  if (state.miningTargetTile && !state.miningQueuedDirections.length && !state.miningQueuedInteraction) {
+    syncMiningQueuedPlan(session, player, state.miningTargetTile);
   }
 
   if (state.miningQueuedDirections.length) {
@@ -3532,11 +3534,65 @@ async function advanceMiningQueuedAction() {
   }
   const errorCode = payload?.errorCode || "";
   if (!errorCode) {
-    clearMiningQueuedActions();
+    state.miningQueuedInteraction = null;
+    state.miningQueuedDirections = [];
+    if (!state.miningTargetTile) return;
+    const nextSession = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+    const nextPlayer = nextSession ? getMiningCurrentPlayer(nextSession, state.currentUser.id) : null;
+    if (!nextSession || !nextPlayer || nextPlayer.status !== "active") {
+      clearMiningQueuedActions();
+      return;
+    }
+    syncMiningQueuedPlan(nextSession, nextPlayer, state.miningTargetTile);
     return;
   }
   if (errorCode === "cooldown") return;
   clearMiningQueuedActions();
+}
+
+function syncMiningQueuedPlan(session, player, targetTile) {
+  if (!session?.map || !player || !targetTile) {
+    clearMiningQueuedActions();
+    return;
+  }
+
+  const targetX = Math.round(Number(targetTile.x));
+  const targetY = Math.round(Number(targetTile.y));
+  const tile = getMiningTile(session.map, targetX, targetY);
+  if (!tile) {
+    clearMiningQueuedActions();
+    return;
+  }
+
+  const mole = (session.moles || []).find((entry) => entry.x === targetX && entry.y === targetY);
+  const isAdjacent = Math.abs(player.x - targetX) + Math.abs(player.y - targetY) === 1;
+
+  if (mole) {
+    if (isAdjacent) {
+      queueMiningPath([], { action: "attack", meta: { targetId: mole.id } }, { x: targetX, y: targetY });
+      return;
+    }
+    queueMiningPath(findMiningApproachPath(session, player, targetX, targetY, "mole"), null, { x: targetX, y: targetY });
+    return;
+  }
+
+  if (tile.kind === "wall") {
+    if (isAdjacent) {
+      queueMiningPath([], { action: "mine", meta: { x: targetX, y: targetY } }, { x: targetX, y: targetY });
+      return;
+    }
+    queueMiningPath(findMiningApproachPath(session, player, targetX, targetY, "wall"), null, { x: targetX, y: targetY });
+    return;
+  }
+
+  if ((tile.kind === "floor" || tile.kind === "exit") && player.x === targetX && player.y === targetY) {
+    state.miningTargetTile = null;
+    state.miningQueuedDirections = [];
+    state.miningQueuedInteraction = null;
+    return;
+  }
+
+  queueMiningPath(findMiningPath(session, { x: player.x, y: player.y }, { x: targetX, y: targetY }), null, { x: targetX, y: targetY });
 }
 
 function getMiningViewport(session, player) {
@@ -4021,7 +4077,7 @@ function drawMiningPlayerSprite(context, metrics, entry, now) {
 
   const rect = getMiningTileScreenRect(metrics, visual.x, visual.y);
   if (!rect) return;
-  const moving = Math.abs((visual.targetX ?? visual.x) - visual.x) + Math.abs((visual.targetY ?? visual.y) - visual.y) > 0.01;
+  const moving = Math.abs((visual.targetX ?? visual.x) - visual.x) + Math.abs((visual.targetY ?? visual.y) - visual.y) > 0.003;
   const bob = moving ? Math.sin(now / 88) * rect.size * 0.04 : 0;
   const hurtStrength = clamp(1 - ((now - Number(visual.lastHurtAtMs || 0)) / 260), 0, 1);
   const swingStrength = (visual.lastAction === "mine" || visual.lastAction === "attack")
@@ -4072,26 +4128,15 @@ function drawMiningPlayerSprite(context, metrics, entry, now) {
 function drawMiningPlayerName(context, rect, name, isLocal) {
   const label = String(name || "Oyuncu");
   context.save();
-  context.font = `900 ${Math.max(14, rect.size * 0.22)}px Trebuchet MS`;
+  context.font = `800 ${Math.max(10, rect.size * 0.15)}px Trebuchet MS`;
   context.textAlign = "center";
-  context.textBaseline = "middle";
-  const textWidth = context.measureText(label).width;
-  const pillWidth = textWidth + (rect.size * 0.46);
-  const pillHeight = rect.size * 0.34;
-  const pillX = rect.centerX - (pillWidth / 2);
-  const pillY = rect.y - (rect.size * 0.56);
-  context.fillStyle = isLocal ? "rgba(16, 45, 74, 0.88)" : "rgba(22, 28, 36, 0.76)";
-  context.beginPath();
-  context.roundRect(pillX, pillY, pillWidth, pillHeight, pillHeight / 2);
-  context.fill();
-  context.strokeStyle = isLocal ? "rgba(120, 224, 255, 0.45)" : "rgba(255, 255, 255, 0.16)";
-  context.lineWidth = Math.max(1.5, rect.size * 0.022);
-  context.stroke();
-  context.fillStyle = "#f7fbff";
-  context.strokeStyle = "rgba(0, 0, 0, 0.28)";
-  context.lineWidth = Math.max(1.25, rect.size * 0.018);
-  context.strokeText(label, rect.centerX, pillY + (pillHeight / 2));
-  context.fillText(label, rect.centerX, pillY + (pillHeight / 2));
+  context.textBaseline = "top";
+  const textY = rect.y + (rect.size * 0.98);
+  context.fillStyle = isLocal ? "#f7fbff" : "rgba(240, 247, 255, 0.92)";
+  context.strokeStyle = "rgba(0, 0, 0, 0.38)";
+  context.lineWidth = Math.max(1, rect.size * 0.014);
+  context.strokeText(label, rect.centerX, textY);
+  context.fillText(label, rect.centerX, textY);
   context.restore();
 }
 
