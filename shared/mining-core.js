@@ -10,6 +10,7 @@ export const MINING_EVENT_LIFETIME_MS = 75 * 1000;
 export const MINING_VIEW_RADIUS = 13;
 export const MINING_TILE_SIZE = 34;
 export const MINING_DEFAULT_WALLET_COINS = 500;
+const MINING_MAX_SIMULATION_STEPS = 24;
 const MINING_MAP_BASE_SIZE = 385;
 const MINING_MAP_PLAYER_GROWTH = 24;
 const MINING_MAP_MAX_SIZE = 513;
@@ -451,7 +452,8 @@ function simulateMiningSession(game, now) {
   const startTick = Math.max(Number(game.lastSimulatedAtMs || now), Number(game.startedAtMs || now));
   const lastTick = Math.floor(startTick / 1000);
   const nextTick = Math.floor(now / 1000);
-  for (let tick = lastTick + 1; tick <= nextTick; tick += 1) {
+  const cappedLastTick = Math.max(lastTick, nextTick - MINING_MAX_SIMULATION_STEPS);
+  for (let tick = cappedLastTick + 1; tick <= nextTick; tick += 1) {
     simulateMoleTick(game, tick * 1000);
   }
   game.lastSimulatedAtMs = now;
