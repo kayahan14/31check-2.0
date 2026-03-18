@@ -15,7 +15,12 @@ import {
   normalizeMiningProfile,
   normalizeMiningSession
 } from "../shared/mining-core.js";
-import { appendMessage, listScopeMessages, updateMessage } from "../server/storage.js";
+import {
+  getMiningProfileRecord as getStoredMiningProfileRecord,
+  getMiningSessionRecord as getStoredMiningSessionRecord,
+  saveMiningProfileRecord,
+  saveMiningSessionRecord
+} from "../server/mining-storage.js";
 
 globalThis.__miningQueues ||= {};
 
@@ -122,7 +127,7 @@ async function mutateMiningState(scopeKey, action, actor, meta = {}) {
     }
 
     const session = createMiningSession(normalizedActor, profile, now);
-    const created = await appendMessage(scopeKey, MINING_CHANNEL_ID, {
+    const created = await saveMiningSessionRecord(scopeKey, {
       id: crypto.randomUUID(),
       channelId: MINING_CHANNEL_ID,
       author: normalizedActor.name,
@@ -234,21 +239,13 @@ async function syncMiningSessionRecord(scopeKey, now = Date.now()) {
 }
 
 async function getCurrentMiningSessionRecord(scopeKey) {
-  const sessions = await listScopeMessages(scopeKey, {
-    channelId: MINING_CHANNEL_ID,
-    messageTypes: [MINING_TYPE],
-    limit: 1
-  });
-
-  if (!sessions.length) return null;
-
-  return [...sessions].sort((left, right) => Number(right.serverCreatedAtMs || 0) - Number(left.serverCreatedAtMs || 0))[0];
+  return getStoredMiningSessionRecord(scopeKey);
 }
 
 async function ensureMiningProfileRecord(scopeKey, actor, now = Date.now()) {
   const latest = await getMiningProfileRecord(scopeKey, actor.id);
   if (!latest) {
-    return appendMessage(scopeKey, MINING_CHANNEL_ID, {
+    return saveMiningProfileRecord(scopeKey, actor.id, {
       id: crypto.randomUUID(),
       channelId: MINING_CHANNEL_ID,
       author: actor.name,
@@ -270,20 +267,11 @@ async function ensureMiningProfileRecord(scopeKey, actor, now = Date.now()) {
 }
 
 async function getMiningProfileRecord(scopeKey, userId) {
-  const profiles = (await listScopeMessages(scopeKey, {
-    channelId: MINING_CHANNEL_ID,
-    messageTypes: [MINING_PROFILE_TYPE],
-    limit: 20
-  }))
-    .filter((message) => String(message?.content?.userId || "") === String(userId || ""));
-
-  if (!profiles.length) return null;
-
-  return [...profiles].sort((left, right) => Number(right.serverCreatedAtMs || 0) - Number(left.serverCreatedAtMs || 0))[0];
+  return getStoredMiningProfileRecord(scopeKey, userId);
 }
 
 async function updateMiningProfileRecord(scopeKey, record, profile, actor, now) {
-  return updateMessage(scopeKey, record.id, {
+  return saveMiningProfileRecord(scopeKey, actor.id, {
     ...record,
     author: actor.name,
     avatar: actor.name,
@@ -296,7 +284,7 @@ async function updateMiningProfileRecord(scopeKey, record, profile, actor, now) 
 }
 
 async function writeMiningSession(scopeKey, record, session, now) {
-  return updateMessage(scopeKey, record.id, {
+  return saveMiningSessionRecord(scopeKey, {
     ...record,
     createdAt: new Date(now).toISOString(),
     createdAtMs: now,
