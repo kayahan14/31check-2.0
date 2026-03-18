@@ -400,8 +400,7 @@ async function initializeRuntime() {
     await loadPersistedMessages({ initial: true });
     state.membersLoading = false;
     startMessageSync();
-    await initializeDragonTransport();
-    await initializeMiningTransport();
+    await initializeDedicatedCasinoViews();
     render();
     return;
   }
@@ -422,8 +421,7 @@ async function initializeRuntime() {
     await hydrateParticipants();
     await loadPersistedMessages({ initial: true });
     startMessageSync();
-    await initializeDragonTransport();
-    await initializeMiningTransport();
+    await initializeDedicatedCasinoViews();
     render();
     renderUserModal();
   } catch (error) {
@@ -436,10 +434,32 @@ async function initializeRuntime() {
     state.membersLoading = false;
     await loadPersistedMessages({ initial: true });
     startMessageSync();
-    await initializeDragonTransport();
-    await initializeMiningTransport();
+    await initializeDedicatedCasinoViews();
     render();
   }
+}
+
+async function initializeDedicatedCasinoViews() {
+  const dragonTask = initializeDragonTransport().catch((error) => {
+    console.warn("Dragon transport bootstrap failed.", error);
+  });
+  const miningTask = initializeMiningTransport().catch((error) => {
+    console.warn("Mining transport bootstrap failed.", error);
+  });
+
+  if (isCasinoMiningView()) {
+    await miningTask;
+    void dragonTask;
+    return;
+  }
+  if (isCasinoDragonView()) {
+    await dragonTask;
+    void miningTask;
+    return;
+  }
+
+  void dragonTask;
+  void miningTask;
 }
 
 async function authenticateWithDiscord() {
