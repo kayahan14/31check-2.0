@@ -86,10 +86,25 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "GET, POST");
     res.status(405).json({ error: "Method not allowed." });
   } catch (error) {
+    console.error("[mining]", describeMiningError(error));
     res.status(500).json({
       error: "Mining session failed.",
-      details: error instanceof Error ? error.message : String(error)
+      details: describeMiningError(error)
     });
+  }
+}
+
+function describeMiningError(error) {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
   }
 }
 

@@ -11,6 +11,22 @@ const MINING_PROFILE_TABLE = "mining_profiles";
 globalThis.__miningBlobFallbackStore ||= { sessions: {}, profiles: {} };
 let supabaseClient;
 
+function isMissingSupabaseRelationError(error) {
+  const code = String(error?.code || "");
+  const status = Number(error?.status || error?.statusCode || 0);
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "42P01"
+    || code === "PGRST205"
+    || code === "PGRST204"
+    || status === 404
+    || message.includes("does not exist")
+    || message.includes("not found")
+    || message.includes("could not find the table")
+    || message.includes("relation")
+  );
+}
+
 function hasBlobConfig() {
   return process.env.MINING_USE_BLOB === "1" && Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
@@ -178,7 +194,7 @@ async function getMiningTableSessionRecord(scopeKey) {
     .maybeSingle();
 
   if (error) {
-    if (String(error.code || "") === "42P01") return null;
+    if (isMissingSupabaseRelationError(error)) return null;
     throw error;
   }
   return normalizeStoredRecord(data?.record || null);
@@ -196,7 +212,7 @@ async function upsertMiningTableSessionRecord(scopeKey, record) {
     }, { onConflict: "scope_key" });
 
   if (error) {
-    if (String(error.code || "") === "42P01") return null;
+    if (isMissingSupabaseRelationError(error)) return null;
     throw error;
   }
   return normalized;
@@ -213,7 +229,7 @@ async function getMiningTableProfileRecord(scopeKey, userId) {
     .maybeSingle();
 
   if (error) {
-    if (String(error.code || "") === "42P01") return null;
+    if (isMissingSupabaseRelationError(error)) return null;
     throw error;
   }
   return normalizeStoredRecord(data?.record || null);
@@ -232,7 +248,7 @@ async function upsertMiningTableProfileRecord(scopeKey, userId, record) {
     }, { onConflict: "scope_key,user_id" });
 
   if (error) {
-    if (String(error.code || "") === "42P01") return null;
+    if (isMissingSupabaseRelationError(error)) return null;
     throw error;
   }
   return normalized;
