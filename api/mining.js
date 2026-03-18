@@ -231,7 +231,7 @@ async function getCurrentMiningSessionRecord(scopeKey) {
   const sessions = await listScopeMessages(scopeKey, {
     channelId: MINING_CHANNEL_ID,
     messageTypes: [MINING_TYPE],
-    limit: 10
+    limit: 1
   });
 
   if (!sessions.length) return null;
@@ -267,7 +267,7 @@ async function getMiningProfileRecord(scopeKey, userId) {
   const profiles = (await listScopeMessages(scopeKey, {
     channelId: MINING_CHANNEL_ID,
     messageTypes: [MINING_PROFILE_TYPE],
-    limit: 80
+    limit: 20
   }))
     .filter((message) => String(message?.content?.userId || "") === String(userId || ""));
 
