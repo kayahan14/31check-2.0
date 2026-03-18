@@ -3531,9 +3531,6 @@ async function advanceMiningQueuedAction() {
     const errorCode = payload?.errorCode || "";
     if (!errorCode) {
       state.miningQueuedDirections.shift();
-      if (!state.miningQueuedDirections.length && !state.miningQueuedInteraction) {
-        state.miningTargetTile = null;
-      }
       return;
     }
     if (errorCode === "cooldown") return;
