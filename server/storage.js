@@ -87,10 +87,14 @@ export async function updateMessage(scopeKey, messageId, nextMessage) {
           "server_created_at",
           "server_created_at_ms"
         ].join(","))
-        .single();
+        .maybeSingle();
 
       if (error) {
         throw error;
+      }
+      if (!data) {
+        await appendSupabaseMessage(scopeKey, normalizedMessage.channelId, normalizedMessage);
+        return normalizedMessage;
       }
 
       return mapRowToMessage(data);
@@ -264,7 +268,8 @@ function updateEphemeralMessage(scopeKey, messageId, nextMessage) {
     return channels[channelId][index];
   }
 
-  throw new Error("Message not found for update.");
+  appendEphemeralMessage(scopeKey, nextMessage.channelId, nextMessage);
+  return nextMessage;
 }
 
 function mapRowToMessage(row) {
