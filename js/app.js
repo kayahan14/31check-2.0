@@ -2817,6 +2817,19 @@ async function initializeMiningTransport() {
           visual.speed = Number(message.speed || 4.0);
           visual.facing = message.facing || visual.facing;
         }
+        const session = state.miningSession?.content;
+        if (session) {
+          const corePlayer = getMiningCurrentPlayer(session, message.actorId);
+          if (corePlayer) {
+            corePlayer.targetX = Number(message.targetX ?? message.x);
+            corePlayer.targetY = Number(message.targetY ?? message.y);
+            corePlayer.x = Number(message.x);
+            corePlayer.y = Number(message.y);
+            corePlayer.speed = Number(message.speed || corePlayer.speed);
+            corePlayer.facing = message.facing || corePlayer.facing;
+            corePlayer.lastMovedAtMs = Date.now();
+          }
+        }
       }
       if (message.type === "mining_action" && message.actorId !== state.currentUser.id) {
         const session = state.miningSession?.content;
@@ -3030,6 +3043,22 @@ function tickMiningCanvasFrame(frameAtMs) {
 
   const deltaMs = state.miningCanvasLastFrameAtMs ? Math.min(34, Math.max(8, frameAtMs - state.miningCanvasLastFrameAtMs)) : 16;
   state.miningCanvasLastFrameAtMs = frameAtMs;
+  
+  const session = state.miningSession?.content;
+  if (session && getMiningPhase(session) === "active") {
+    advanceMiningSession(session, getMiningNow());
+    
+    const localPlayer = getMiningCurrentPlayer(session, state.currentUser.id);
+    const localVisual = state.miningVisualPlayers?.[state.currentUser.id];
+    if (localPlayer && localVisual) {
+      localVisual.x = localPlayer.x;
+      localVisual.y = localPlayer.y;
+      localVisual.targetX = localPlayer.targetX;
+      localVisual.targetY = localPlayer.targetY;
+      localVisual.facing = localPlayer.facing;
+    }
+  }
+
   advanceMiningVisualState(deltaMs);
   renderMiningCanvas(canvas);
   state.miningCanvasRaf = window.requestAnimationFrame(tickMiningCanvasFrame);
@@ -3038,6 +3067,9 @@ function tickMiningCanvasFrame(frameAtMs) {
 function advanceMiningVisualState(deltaMs) {
   for (const entry of Object.values(state.miningVisualPlayers || {})) {
     if (!entry) continue;
+
+    if (entry.id === state.currentUser.id) continue;
+
     const speed = Number(entry.speed || 4.0);
     const tx = Number(entry.targetX ?? entry.serverX ?? entry.x);
     const ty = Number(entry.targetY ?? entry.serverY ?? entry.y);
