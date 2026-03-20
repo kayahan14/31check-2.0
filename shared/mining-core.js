@@ -192,7 +192,10 @@ export function advanceMiningSession(content, now = Date.now()) {
 }
 
 export function normalizeMiningSession(content, now = Date.now()) {
-  return hydrateMiningRuntimeSession(content, now);
+  const game = hydrateMiningRuntimeSession(content, now);
+  game.isTransportSnapshot = false;
+  game._runtimeHydrated = true;
+  return game;
 }
 
 export function createMiningTransportSession(session, now = Date.now(), playerId = "") {
