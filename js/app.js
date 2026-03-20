@@ -3128,12 +3128,44 @@ async function handleMiningUiAction(action) {
     await performMiningAction(action);
   }
   if (action === "leave_session") {
+    void performMiningAction("extract", {}, { silent: true });
     selectChannel("1");
   }
 }
 
 async function performMiningAction(action, meta = {}, options = {}) {
   const { silent = false } = options;
+
+  if (action === "start_lobby" || action === "join_lobby") {
+    try {
+      const response = await fetch(buildGameApiUrl("/api/mining"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scopeKey: getMiningScopeKey(),
+          action,
+          actor: {
+            id: state.currentUser.id,
+            name: state.currentUser.displayName
+          },
+          ...meta
+        })
+      });
+      if (!response.ok) throw new Error("Mining action failed.");
+      const payload = await response.json();
+      applyMiningTransportPayload(payload, { forceRender: true });
+      if (payload.errorCode) {
+        const label = translateMiningError(payload.errorCode);
+        if (label && !silent) showToast(label);
+      }
+      return payload;
+    } catch (error) {
+      console.warn("Mining action failed.", error);
+      if (!silent) showToast("Mining istegi basarisiz.");
+      return null;
+    }
+  }
+
   const session = state.miningSession?.content;
   if (!session || session.status !== "active") {
     if (!silent) showToast("Aktif bir maden yok.");
@@ -3184,34 +3216,6 @@ async function performMiningAction(action, meta = {}, options = {}) {
     errorCode = result.reason || "";
     if (changed) {
       sendMiningWs("mining_action", { action: "extract", data: {} });
-    }
-  } else if (action === "start_lobby" || action === "join_lobby") {
-    try {
-      const response = await fetch(buildGameApiUrl("/api/mining"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scopeKey: getMiningScopeKey(),
-          action,
-          actor: {
-            id: state.currentUser.id,
-            name: state.currentUser.displayName
-          },
-          ...meta
-        })
-      });
-      if (!response.ok) throw new Error("Mining action failed.");
-      const payload = await response.json();
-      applyMiningTransportPayload(payload, { forceRender: true });
-      if (payload.errorCode) {
-        const label = translateMiningError(payload.errorCode);
-        if (label && !silent) showToast(label);
-      }
-      return payload;
-    } catch (error) {
-      console.warn("Mining action failed.", error);
-      if (!silent) showToast("Mining istegi basarisiz.");
-      return null;
     }
   }
 
