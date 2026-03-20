@@ -1,4 +1,6 @@
 import { WebSocketServer } from "ws";
+import { getMiningSessionRecord } from "./mining-storage.js";
+import { mineMiningTile, attackMiningMole, extractMiningPlayer, abandonMiningPlayer, getMiningCurrentPlayer } from "../shared/mining-core.js";
 
 const HEARTBEAT_INTERVAL_MS = 1000;
 const LIVENESS_INTERVAL_MS = 15000;
@@ -175,6 +177,24 @@ export function attachRealtimeServer(server, options = {}) {
             data: payload.data,
             serverNowMs: Date.now()
           });
+
+          if (client.stream === "mining") {
+            void getMiningSessionRecord(client.scopeKey).then(record => {
+              const session = record?.content;
+              const now = Date.now();
+              if (session && session.status === "active") {
+                if (payload.action === "mine") {
+                  mineMiningTile(session, client.actorId, Math.round(Number(payload.data?.x)), Math.round(Number(payload.data?.y)), now);
+                } else if (payload.action === "attack") {
+                  attackMiningMole(session, client.actorId, payload.data?.targetId, now);
+                } else if (payload.action === "extract") {
+                  extractMiningPlayer(session, client.actorId, now);
+                } else if (payload.action === "abandon") {
+                  abandonMiningPlayer(session, client.actorId, now);
+                }
+              }
+            }).catch(() => {});
+          }
           return;
         }
         if (payload?.type === "mining_position") {
@@ -191,6 +211,24 @@ export function attachRealtimeServer(server, options = {}) {
             speed: payload.speed,
             serverNowMs: Date.now()
           });
+
+          if (client.stream === "mining") {
+            void getMiningSessionRecord(client.scopeKey).then(record => {
+              const session = record?.content;
+              if (session) {
+                const corePlayer = getMiningCurrentPlayer(session, client.actorId);
+                if (corePlayer) {
+                  corePlayer.targetX = Number(payload.targetX ?? payload.x);
+                  corePlayer.targetY = Number(payload.targetY ?? payload.y);
+                  corePlayer.x = Number(payload.x);
+                  corePlayer.y = Number(payload.y);
+                  corePlayer.speed = Number(payload.speed || corePlayer.speed);
+                  corePlayer.facing = payload.facing || corePlayer.facing;
+                  corePlayer.lastMovedAtMs = Date.now();
+                }
+              }
+            }).catch(() => {});
+          }
           return;
         }
       } catch {
