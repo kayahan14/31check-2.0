@@ -9,6 +9,7 @@ import {
   MINING_VIEW_RADIUS,
   advanceMiningSession,
   attackMiningMole,
+  abandonMiningPlayer,
   extractMiningPlayer,
   getMiningCurrentPlayer,
   getMiningPhase,
@@ -2842,6 +2843,8 @@ async function initializeMiningTransport() {
             attackMiningMole(session, message.actorId, data.targetId, Date.now());
           } else if (actionName === "extract") {
             extractMiningPlayer(session, message.actorId, Date.now());
+          } else if (actionName === "abandon") {
+            abandonMiningPlayer(session, message.actorId, Date.now());
           }
           requestMiningCanvasFrame();
         }
@@ -3160,7 +3163,7 @@ async function handleMiningUiAction(action) {
     await performMiningAction(action);
   }
   if (action === "leave_session") {
-    void performMiningAction("extract", {}, { silent: true });
+    void performMiningAction("abandon", {}, { silent: true });
     selectChannel("1");
   }
 }
@@ -3248,6 +3251,13 @@ async function performMiningAction(action, meta = {}, options = {}) {
     errorCode = result.reason || "";
     if (changed) {
       sendMiningWs("mining_action", { action: "extract", data: {} });
+    }
+  } else if (action === "abandon") {
+    const result = abandonMiningPlayer(session, playerId, now);
+    changed = result.changed;
+    errorCode = result.reason || "";
+    if (changed) {
+      sendMiningWs("mining_action", { action: "abandon", data: {} });
     }
   }
 

@@ -459,6 +459,22 @@ export function extractMiningPlayer(game, playerId, now = Date.now()) {
   return { changed: true, reason: "", player, awardedCoins: player.runCoins };
 }
 
+export function abandonMiningPlayer(game, playerId, now = Date.now()) {
+  const player = getMiningCurrentPlayer(game, playerId);
+  if (!player || player.status !== "active") return { changed: false, reason: "inactive" };
+
+  player.status = "collapsed";
+  player.extractedAtMs = now;
+  game.summary = `${player.name} madeni terk etti.`;
+  if ((game.players || []).every((entry) => entry.status !== "active")) {
+    game.status = "finished";
+    game.finishedAtMs = now;
+    game.summary = "Tum aktif madenciler kacti/cikti.";
+  }
+  game.revision += 1;
+  return { changed: true, reason: "", player };
+}
+
 export function renderMiningTextState(game, playerId) {
   if (!game) {
     return JSON.stringify({ mode: "idle" });
@@ -757,6 +773,12 @@ function advancePlayerPosition(player, map, now) {
       break;
     }
     remaining -= step;
+  }
+
+  // If physics stuck completely, clear target lock
+  if (Math.abs(px - player.x) < 0.001 && Math.abs(py - player.y) < 0.001) {
+    player.targetX = px;
+    player.targetY = py;
   }
 
   player.x = px;
