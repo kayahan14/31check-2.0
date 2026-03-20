@@ -271,15 +271,8 @@ export function moveMiningPlayer(game, playerId, targetX, targetY, now = Date.no
   const player = getMiningCurrentPlayer(game, playerId);
   if (!player || player.status !== "active") return { changed: false, reason: "inactive" };
 
-  const tileX = Math.floor(targetX);
-  const tileY = Math.floor(targetY);
-  const tile = getMiningTile(game.map, tileX, tileY);
-  if (!tile || (tile.kind !== "floor" && tile.kind !== "exit")) {
-    return { changed: false, reason: "blocked" };
-  }
-
-  player.targetX = targetX;
-  player.targetY = targetY;
+  player.targetX = Math.max(0, Math.min(game.map.size - 0.01, targetX));
+  player.targetY = Math.max(0, Math.min(game.map.size - 0.01, targetY));
   if (!player.lastMovedAtMs) player.lastMovedAtMs = now;
 
   const dx = targetX - player.x;
