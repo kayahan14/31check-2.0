@@ -1,0 +1,12 @@
+
+> 31check-activity@1.0.0 client:dev
+> vite --host 127.0.0.1 --port 5176
+
+
+  [32m[1mVITE[22m v7.3.1[39m  [2mready in [0m[1m189[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5176[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[2m10:42:44[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mjs/app.js[22m
+[2m10:43:44[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mjs/app.js[22m
+^C^C

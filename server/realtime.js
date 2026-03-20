@@ -94,6 +94,16 @@ export function attachRealtimeServer(server, options = {}) {
     }
   }
 
+  function relayToOthers(sender, message) {
+    const normalizedStream = sender.stream;
+    const normalizedScopeKey = sender.scopeKey;
+    for (const client of clients) {
+      if (client === sender) continue;
+      if (client.stream !== normalizedStream || client.scopeKey !== normalizedScopeKey) continue;
+      sendJson(client.socket, message);
+    }
+  }
+
   async function broadcast(stream, scopeKey, meta = {}) {
     const normalizedStream = String(stream || "").trim();
     const normalizedScopeKey = String(scopeKey || "local-preview").trim() || "local-preview";
@@ -152,6 +162,36 @@ export function attachRealtimeServer(server, options = {}) {
         const payload = JSON.parse(String(raw || ""));
         if (payload?.type === "refresh") {
           void sendSnapshot(client, "refresh");
+          return;
+        }
+        if (payload?.type === "mining_action") {
+          relayToOthers(client, {
+            type: "mining_action",
+            stream: client.stream,
+            scopeKey: client.scopeKey,
+            actorId: client.actorId,
+            actorName: client.actorName,
+            action: payload.action,
+            data: payload.data,
+            serverNowMs: Date.now()
+          });
+          return;
+        }
+        if (payload?.type === "mining_position") {
+          relayToOthers(client, {
+            type: "mining_position",
+            stream: client.stream,
+            scopeKey: client.scopeKey,
+            actorId: client.actorId,
+            x: payload.x,
+            y: payload.y,
+            targetX: payload.targetX,
+            targetY: payload.targetY,
+            facing: payload.facing,
+            speed: payload.speed,
+            serverNowMs: Date.now()
+          });
+          return;
         }
       } catch {
         // Ignore malformed client messages.
@@ -209,7 +249,8 @@ export function attachRealtimeServer(server, options = {}) {
     clients,
     allowedOrigins,
     sendSnapshot,
-    broadcast
+    broadcast,
+    relayToOthers
   };
 
   wss.on("close", () => {

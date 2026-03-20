@@ -1,0 +1,122 @@
+Original prompt: Bu proje Discord Activity tabanli bir web app. Mevcut istek: develop-web-game skillini kullan, workspace'i incele, index.html / js/app.js / api/dragon.js / css/style.css icindeki son degisiklikleri dogrula, Ejderha admin panelini duzenli bitir, crashAtMultiplier uretimini lucky chance %5 + lucky tur 1000'de 1 + normal bantlar (<1.15 => 20/1000, 1.15-3 => 7/1000, 3-10 => 5/1000, 10+ => 3/1000) kuralinda finalize et, sistemi degistirme, build + deploy + kisa ozet ver.
+
+- 2026-03-16: Skill acildi ve mevcut kod okundu.
+- 2026-03-16: index.html, js/app.js, api/dragon.js ve css/style.css uzerinde dragon config sekmeleri ile yeni crash generation alanlari dogrulandi.
+- 2026-03-16: Mevcut durumda crash sonucu tur basinda belirleniyor; realtime dragon akisi ve acceleration handoff mimarisi korunuyor.
+- 2026-03-16: Dragon config modal daha genis ve bolumlu hale getirildi; placeholder oyun sekmeleri duzenlendi.
+- 2026-03-16: Local dev icin Express server'a /api/dragon route'u baglandi; Playwright dogrulamasindaki 404 bu nedenle goruluyordu.
+- 2026-03-17: Dragon session polling 8s'den 1s'ye indirildi; broadcast olmasa bile yeni turun diger clientta anlik gorunmesi hedeflendi.
+- 2026-03-17: Dedicated Dragon ekrani artik desktop/tablet'te sagdaki aktif kullanici paneli ile birlikte render ediliyor.
+- 2026-03-17: Mobil Dragon sayfasinda alt bolume inebilmek icin dragon ekranina scroll davranisi ve mobil yukseklik duzenlemesi eklendi.
+- 2026-03-17: User modal backdrop kapanisi pointer origin'e baglandi; number input uzerinde suruklerken modal kapanma sorunu kapatildi.
+- 2026-03-17: Gec cashout sonrasi optimistic state'in server crash'ini ezmesi nedeniyle olusan 3.14x stuck bug'i icin iki fix eklendi: server'da resolve action, client'ta authoritative crash merge onceligi.
+- 2026-03-17: Dragon ekranina son 50 sonuc seridi eklendi; kalan sure etiketi mor oyun alaninin icine sol ustte tasindi.
+- 2026-03-17: Sonuc pill'leri 1.00-1.10, 1.10-1.50, 1.50-2.00, 2.00-3.00, 3.00-10.00 ve 10.00+ bantlarina gore renklendirildi.
+- 2026-03-17: Dragon config defaultlari `shared/dragon-config.js` icine tasindi; client ve server artik tek kaynaktan normalize ediyor.
+- 2026-03-17: Dragon config payload'ina `configUpdatedAtMs` eklendi; eski payload artik yeni kaydi geri ezemiyor.
+- 2026-03-17: Dragon ekraninda scroll kapatildi; history strip ve scene yukseklikleri viewport'a gore daha kompakt hale getirildi.
+- 2026-03-17: Playwright smoke ile mock admin + mobil dragon layout kontrol edildi; mobilde ilk denemede sayfa scroll'u sidebar stack'inden geliyordu, dragon view icin kompakt sol rail layout eklendi.
+- 2026-03-17: API smoke testinde config save sonrasi `configUpdatedAtMs` monoton ilerledi ve final GET son lobbyMs degerini (13000) korudu.
+- 2026-03-17: Casino altina dedicated `Mining` view eklendi; tek aktif session, 1 dk join window ve Discord auth actor id/display ile server-authoritative API baglandi.
+- 2026-03-17: `api/mining.js` + `shared/mining-core.js` ile kare tabanli map generation, gizli 2 cikis, ore reward, agirlik yavaslamasi, kostebek spawn/track, rare damar event ve extraction akisi eklendi.
+- 2026-03-17: Mining ana menu, envanter slotlari ve dukkan placeholder panelleri eklendi; ekipman etkileri sonraya birakildi ama slot yapisi hazirlandi.
+- 2026-03-17: Playwright/manual smoke ile mining menu, lobby->active transition, hareket + kazma ve mobil active view dogrulandi.
+- 2026-03-17: Mining join window kaldirildi; yeni session artik aninda aktif basliyor ve oyuncular aktif run'a sonradan katilabiliyor.
+- 2026-03-17: Mining aktif ekrani tek stage/HUD yapisina cevrildi; ic sag panel ve global sag uye kolonu mining view'dan kaldirildi, run coin/butunluk/katilim/cikis/hard timer ust saga tasindi.
+- 2026-03-17: WASD tabanli kontrol kaldirildi; canvas click koordinatlari CSS olceklenmesine gore normalize edildi, click ile hareket/kazma/vurma akisi duzeltildi.
+- 2026-03-17: Harita ciddi sekilde buyutuldu (`181x181`), viewport `21x21` gorunur tile'a cikti; canvas viewport'a sigacak sekilde buyutulup scrollsuz hale getirildi.
+- 2026-03-17: Cikis butonu kaldirildi; exit tile'ina basinca server tarafinda otomatik extract akisi eklendi.
+- 2026-03-17: Mining HUD icin 250ms UI ticker eklendi; hedef/cokus sayaçlari render'da canli ilerliyor.
+- 2026-03-17: Canvas'a elde kazma cizimi ve hasarli duvarlar icin catlak cizgileri eklendi.
+- 2026-03-17: Build gecti. Playwright skill client ile click hareket dogrulandi (`state-0`: x 90->91). Ek Playwright smoke ile `Katilim 1->2`, hedef sayacinin `10dk58sn -> 10dk56sn` ilerledigi ve desktop/mobile viewport'ta scroll olmadigi dogrulandi.
+- 2026-03-18: Canli mining giris hatasi yeniden uretildi. Ilk `start_lobby` 200 donerken ikinci mining aksiyonu (`join_lobby` / `move`) production'da 500 veriyordu.
+- 2026-03-18: Kok neden `server/storage.js` icindeki `deserializeContent` oldu; `mining_session` ve `mining_profile` Supabase'dan string olarak donuyor, ikinci istekte structured state yerine string geldigi icin handler patliyordu.
+- 2026-03-18: `deserializeContent` structured tipleri (`mining*`, `_session`, `_profile`) da JSON parse edecek sekilde guncellendi. Local sequential API testte `start_lobby -> join_lobby` artik basarili (`players=2`, `status=active`).
+- 2026-03-18: Build tekrar gecti. Playwright ile mining aktif ekran screenshot/state dogrulandi, console error cikmadi.
+- 2026-03-18: Mining aktif UI yeniden ele alindi; ustteki ayri run bar kaldirildi, stage icine overlay HUD tasindi ve renk paleti daha canli/cartoon hale getirildi.
+- 2026-03-18: `shared/mining-core.js` tarafinda spawn free area `9x9`, tercihli spawn noktasi `5` adet ve map size uretimi daha buyuk (`241+`) olacak sekilde guncellendi.
+- 2026-03-18: `js/app.js` icinde mining icin click-to-move queue, hedef/path highlight, wall/mole icin otomatik yaklas+aksiyon ve sidebar auto-collapse eklendi.
+- 2026-03-18: Mining ticker ayrildi; action queue hizli kalirken tam ekran render throttled hale getirildi, boylece canvas click davranisi daha stabil oldu.
+- 2026-03-18: Playwright skill client ile aktif mining ekran screenshot'i alindi; custom Playwright smoke ile `sidebar-collapsed=true`, `x:91 -> 93`, `originX:78 -> 80` ve queued mining sonrasi hedef duvarin `wall -> floor`, coin'in `6 -> 12` oldugu dogrulandi.
+- 2026-03-18: Mobil smoke ile `scrollHeight === clientHeight` dogrulandi; aktif mining header artik ayri bir blok olarak render edilmiyor.
+- 2026-03-18: Production chat/mining takilmasinin ana sebebi `api/messages` ve dedicated game endpoint'lerinin tum message tablosunu, devasa `mining_session` payload'lariyla birlikte okumasiydi.
+- 2026-03-18: `server/storage.js` icine filtreli `listScopeMessages` akisi eklendi; `api/messages` artik `dragon_state`, `dragon_config`, `mining_session`, `mining_profile` tiplerini chat sync'ine almiyor.
+- 2026-03-18: `api/mining.js` ve `api/dragon.js` artik butun scope'u taramak yerine kendi channel/type kayitlarini dogrudan filtreli okuyor; local smoke'ta `api/messages` 8.4MB -> 836B, `api/mining` 8.4MB -> 1113B boyutuna indi.
+- 2026-03-18: SPA route icin `vercel.json` rewrite eklendi; `/channel/...` pathleri artik root'a dusmeli.
+- 2026-03-18: Aktif mining seansi production'da hala sisik kalinca ikinci optimizasyon eklendi: mining map artik API response'ta compact `tilesEncoded` snapshot olarak gidiyor, client tarafinda decode edilip ciziliyor.
+- 2026-03-18: Local active mining smoke'ta `api/mining` aktif session payload'i 1.8KB seviyesine indi; Playwright ile `Magaayi Ac` sonrasi canvas acildigi ve mining ekraninin aktif render ettigi tekrar dogrulandi.
+- 2026-03-18: Production direct mining route'u hala `Mining yukleniyor...` ekraninda kaliyordu; sebep runtime bootstrap'ta dragon init'inin mining init'ini bekletmesiydi.
+- 2026-03-18: `initializeDedicatedCasinoViews()` eklendi; mining route'ta mining bootstrap once bekleniyor, dragon arkada devam ediyor. Root/chat'te iki transport da background baslatiliyor.
+- 2026-03-18: Mining'in ana stabilite sorunu tespit edildi: GET/POST transport hala full map snapshot tasiyordu; 409x409 map transport JSON'i tek response'ta ~502KB uretmeye basliyordu.
+- 2026-03-18: Mining transport visible-window'a cevrildi; artik sadece oyuncunun etrafindaki 27x27 pencere gidiyor. Aynı 409x409 world icin transport JSON'i ~3.2KB'ye indi.
+- 2026-03-18: Canvas input path queue'dan tek-click/tek-aksiyon modeline indirildi; pointerdown + buffered latest click + overlay pointer-events fix uygulandi.
+- 2026-03-18: Spawn guvenli alan `3x3` oldu (`spawnRadius=1`), world size daha buyuk bir tabana cekildi.
+- 2026-03-18: Mining runtime `api/mining.js` tarafinda scope bazli memory cache'e alindi; GET/POST artik warm session uzerinden akiyor, storage persist ise throttled checkpoint ile yapiliyor.
+- 2026-03-18: `shared/mining-core.js` icine `hydrateMiningRuntimeSession` ve `advanceMiningSession` eklendi. Server devasa haritayi her istekte yeniden clone etmek yerine runtime session'i yerinde simulate ediyor.
+- 2026-03-18: `createMiningTransportSession` runtime session'dan encoded visible-window uretir hale geldi; local API smoke'ta `mapEncoded=true`, `playersBefore=2`, `playersAfter=2`, `beforeX=204 -> afterX=203` dogrulandi.
+- 2026-03-18: Active mining view full `render()` yerine kismi DOM patch ile guncelleniyor. HUD, summary, roster ve join action yerinde degisiyor; canvas yeniden yaratilmadigi icin click hissi stabil kaldi.
+- 2026-03-18: Local Playwright skill smoke ve ek custom Playwright click testi ile canvas click sonrasi oyuncu koordinati `205,205 -> 204,205` dogrulandi.
+- 2026-03-18: Neon altyapisina gecis baslatildi. `server/db.js` ile ortak Postgres pool eklendi, `server/storage.js` ve `server/mining-storage.js` Supabase yerine Neon/Postgres query katmanina tasindi.
+- 2026-03-18: `neon/schema.sql` ve `scripts/migrate-supabase-to-neon.mjs` eklendi. Supabase `messages` tablosundaki 341 satir Neon'a tasindi.
+- 2026-03-18: Local smoke ile Neon uzerinden chat append/list/update ve mining session/profile read-write dogrulandi.
+- 2026-03-18: `server/realtime.js` ile ortak WebSocket hub eklendi; `server/server.js` artik HTTP server + WS upgrade ile Dragon/Mining realtime stream'lerini aciyor.
+- 2026-03-18: `api/dragon.js` ve `api/mining.js` GET payload helper'lari export eder hale geldi; POST mutasyonlari server-side snapshot broadcast tetikliyor.
+- 2026-03-18: `js/app.js` Supabase realtime'dan cikarildi. Dragon/Mining fetch hatlari artik `VITE_GAME_BACKEND_URL` destekli game backend helper'larini kullaniyor; local dev'de otomatik `http://127.0.0.1:3001` seciliyor.
+- 2026-03-18: Client tarafina WebSocket reconnect, heartbeat ve Mining server-clock sync eklendi. Dragon server-clock yaklasimi korunup Mining HUD da server saatine baglandi.
+- 2026-03-18: Mock preview icin `mockUser`, `mockName`, `mockScope` query paramlari ve `window.__31checkDebug` test hook'u eklendi; iki client Playwright smoke bu sayede daha sert dogrulandi.
+- 2026-03-18: Local two-client Dragon smoke: `launchAtMs` ve `startedAtMs` iki sayfada birebir ayni, multiplier ayni anda `1.06x`, console issue yok. Screenshotlar: `output/dragon-two-client-a.png`, `output/dragon-two-client-b.png`.
+- 2026-03-18: Local two-client Mining smoke: ayni scope'ta iki oyuncu aktif seansa girdi, Alpha hareketi Beta sayfasina ayni revision ile yansidi (`revision 4`, `players 2`, `alpha x/y iki sayfada ayni`). Screenshotlar: `output/mining-two-client-a.png`, `output/mining-two-client-b.png`.
+- 2026-03-18: develop-web-game skill client tekrar kosuldu; `output/web-game-dragon` ve `output/web-game-mining` screenshot/state artifact'leri guncel.
+- 2026-03-18: Production game backend icin VPS tarafinda HTTPS/WSS host gerekiyor. Kod production-safe fallback ile deploy edilebilir durumda, ama canli realtime'i tamamlamak icin VPS'e yeniden SSH erisimi lazim; mevcut root password auth red donuyor.
+- 2026-03-18: VPS erisimi yeni parola ile acildi. `/opt/31check` repo `e981969` commit'ine cekildi, `npm install --omit=dev` ve `pm2 restart 31check-mining --update-env` ile backend guncellendi.
+- 2026-03-18: Nginx hostu `46-62-159-126.sslip.io` icin duzenlendi. `certbot --nginx` ile HTTPS/WSS acildi; backend health `https://46-62-159-126.sslip.io/api/health` uzerinden `200`.
+- 2026-03-18: Vercel production env'lerine `VITE_GAME_BACKEND_URL=https://46-62-159-126.sslip.io` ve `MINING_BACKEND_URL=https://46-62-159-126.sslip.io` eklendi. Yeni production deploy alias'i yine `https://31check-2-0.vercel.app`.
+- 2026-03-18: Production two-client Dragon smoke: `launchAtMs` ve `startedAtMs` iki clientta ayni, multiplier ayni anda `1.06x`, console issue yok. Screenshotlar: `output/prod-dragon-two-client-a.png`, `output/prod-dragon-two-client-b.png`.
+- 2026-03-18: Production two-client Mining smoke: iki oyuncu ayni session'a girdi, Alpha hareketi iki clientta da ayni pozisyona geldi (`205,204`), revision `4/4`, players `2/2`, console issue yok. Screenshotlar: `output/prod-mining-two-client-a.png`, `output/prod-mining-two-client-b.png`.
+- TODO: Admin panel UI'sinde eksik polish/guard varsa minimal patch uygula.
+- TODO: Realtime artik canli; sonraki turda gerekirse Dragon/Mining icin socket reconnect metrikleri veya observability/log polish'i eklenebilir.
+- 2026-03-18: Mining hissiyat turu baslatildi. `shared/mining-core.js` icinde map uretimi `205` tabanina cekildi, spawn alani `3x3` tutuldu, yurume cooldown'u kisaldi ve damar sertlikleri 5+ vurus hissi icin korundu.
+- 2026-03-18: `js/app.js` icinde mining canvas artik ayri RAF loop ile akiyor; local player ve diger oyuncular icin visual interpolation, camera smoothing, mouse wheel zoom ve dynamic canvas resolution eklendi.
+- 2026-03-18: Floor grid cizgileri kaldirildi; canvas icine daha sicak/cave background, Stardew-benzeri blob ore cizimi, hasar catlaklari, hedef highlight, cartoon miner sprite ve mole sprite eklendi.
+- 2026-03-18: Nick pill bug'i bulundu; isim etiketi translated context disina alinip duzeltildi. `output/mining-mine-check.png` artik tam nick render ediyor.
+- 2026-03-18: Mining canvas CSS'i square kutudan cikarildi; stage'in tamamini dolduracak sekilde `width/height: 100%` yapildi, pixelated render kaldirildi ve overlay kartlari daha hafif hale getirildi.
+- 2026-03-18: Local build tekrar gecti. Skill client screenshot'i `output/web-game-mining/shot-1.png`, custom movement/zoom screenshot'i `output/mining-page-check-v3.png`, nick dogrulamasi `output/mining-mine-check.png` olarak alindi; console error yok.
+- 2026-03-18: Local two-client mining sync tekrar kontrol edildi. `output/mining-sync-debug.json` icinde Alpha hareketi sonrasi iki client snapshot'inda da oyuncu pozisyonlari ayni session icinde senkron gorundu.
+- 2026-03-18: Discord auth `Failed to fetch` sorunu incelendi. Kok neden backend CORS listesinin Discord webview `Origin: null` ve Vercel preview origin'lerini reddetmesiydi.
+- 2026-03-18: `server/server.js` icine daha genis `isTrustedOrigin` kontrolu eklendi; `null`, Vercel preview alias'lari, sslip hostu, Discord/discordapp/discordsays origin'leri ve localhost artik kabul ediliyor.
+- 2026-03-18: `server/realtime.js` websocket upgrade kontrolu callback destekli hale getirildi; ayni origin kurali WS baglantilarina da uygulandi.
+- 2026-03-18: Discord auth hatasi canlida devam ettigi icin token exchange cross-origin olmaktan cikarildi. `js/app.js` icinde `/api/token` cagrisi tekrar same-origin Vercel function'a alindi; boylece Discord webview auth bootstrap'i backend CORS'una bagimli degil.
+- 2026-03-18: Asil bootstrap kiriginin ilk `/api/messages` fetch'i oldugu daraltildi. Chat/message cagrilari `js/app.js` icinde tekrar same-origin `/api/messages` proxy'sine alindi.
+- 2026-03-18: `api/messages.js` artik production'da `MINING_BACKEND_URL` / `VITE_GAME_BACKEND_URL` tanimliysa backend'e proxy ediyor; browser cross-origin fetch yapmiyor, Vercel server-side backend'e konusuyor.
+- 2026-03-18: `loadPersistedMessages` icine network error catch eklendi; message sync patlasa bile Discord auth bootstrap'i mock moda dusurmuyor.
+- 2026-03-18: Dragon start ve Mining action hatalari daraltildi; production client hala `/api/dragon` ve `/api/mining` icin browser'dan cross-origin backend fetch kullaniyordu.
+- 2026-03-18: `js/app.js` icinde `buildGameApiUrl` production'da same-origin olacak sekilde degistirildi. Local Vite dev'de backend direct fetch korunuyor.
+- 2026-03-18: `api/dragon.js` artik Vercel production'da backend proxy modunu destekliyor; Dragon state artik authoritative VPS backend uzerinden same-origin proxy ile akacak.
+- 2026-03-18: Mining 500'i Vercel proxy fallback'inden cikti; env kacarsa function ham `http://46.62.159.126` adresine dusuyordu. Fallback artik `https://46-62-159-126.sslip.io`.
+- 2026-03-18: Production API smoke'lari Dragon/Mining icin temiz donmeye basladi. Discord icinde eski davranis devam ederse buyuk ihtimalle activity eski HTML/JS bundle'ini cache'ten aciyor.
+- 2026-03-18: `vercel.json` icine `/` ve `/channel/*` icin `Cache-Control: no-store` header'i eklendi; activity SPA HTML'i artik agresif cache'lenmemeli.
+- 2026-03-18: Discord activity origin'inin Vercel origin'i olmayabilecegi netlestirildi. Bu durumda `window.location.origin` bazli same-origin fetch'ler Discord icinde yanlis hosta gidiyor.
+- 2026-03-18: `js/app.js` icine `getFrontendApiOrigin` + `buildFrontendApiUrl` eklendi. Token, messages, dragon ve mining action fetch'leri artik local dev haric production'da mutlak Vercel API origin'ine gidiyor.
+- 2026-03-18: `api/token.js`, `api/messages.js`, `api/dragon.js`, `api/mining.js` icine ortak CORS helper baglandi. Discord/null/proxy origin'lerinden gelen preflight ve JSON POST'lar artik Vercel function seviyesinde izinli.
+- 2026-03-18: Discord benzeri origin ile Vercel function smoke testleri tekrar kosuldu: `OPTIONS /api/mining` 204, `POST /api/dragon` 200, `POST /api/mining` 200.
+- 2026-03-18: develop-web-game smoke ile production `mock=1` ekranlari tekrar acildi. Mining click ile aktif session screenshot'i `output/web-game-mining-live/shot-0.png`. Dragon fresh scope screenshot'i `output/web-game-dragon-fresh/shot-0.png`.
+- 2026-03-18: Supabase/Neon kalintilari temizlendi. `@supabase/supabase-js` ve `@vercel/blob` bagimliliklari package dosyalarindan cikarildi; `scripts/migrate-supabase-to-neon.mjs` ve `neon/schema.sql` silindi; `server/db.js` ve `scripts/migrate-postgres-to-postgres.mjs` artik Neon fallback'i kullanmiyor.
+- 2026-03-18: Discord auth kiriginin kaynagi yeniden daraltildi. Activity icinde absolute Vercel API fetch'i yerine Discord proxy host'ta `/.proxy/api/*` path'leri kullanilacak sekilde `buildFrontendApiUrl` guncellendi.
+- 2026-03-18: Bootstrap'ta OAuth artik zorunlu degil. `CURRENT_USER_UPDATE` SDK event'i ile user once dogrudan alinmaya calisiliyor; OAuth patlarsa uygulama mock moda dusmek yerine event tabanli kimlikle devam ediyor.
+- 2026-03-18: Auth hata metni daraltildi: artik `authorize`, `token-fetch` ve `sdk-authenticate` adimlari ayri ayri banner mesajina dusesebiliyor.
+- 2026-03-18: Build tekrar gecti (`npm.cmd run build`). develop-web-game smoke yeniden kosuldu; son screenshot `output/web-game/shot-0.png`, state `output/web-game/state-0.json`.
+- 2026-03-18: Mining hissiyat patch'i: queued action sistemi yeniden aktiflestirildi. `startMiningUiTicker()` artik her tick'te hedefe yurumeyi / hedef damar veya kostebege tekrar aksiyon denemeyi ilerletiyor.
+- 2026-03-18: Canvas click artik persistent hedef olusturuyor. Floor icin hedefe kadar yurume, wall icin hedefe yaklasma ve adjacent olunca otomatik tekrar kazma akisi `syncMiningQueuedPlan()` ile birlestirildi.
+- 2026-03-18: Move fetch'i atildigi anda local miner sprite icin optimistic target uygulandi; interpolasyon ve camera blend hizlandirildi, boylece kare kare ziplama hissi azaldi.
+- 2026-03-18: Nick etiketi kucultuldu, oyuncunun altina alindi ve arkaplan pill'i kaldirildi.
+- 2026-03-18: Build tekrar gecti. Local custom smoke scripti guncel bundle ile ayri client portunda denenmeye baslandi; production deploy sonrasi gercek smoke kosulacak.
+- TODO: Mining vurus/catlama efektini daha sert gostermek icin adjacent ore hedefini otomatik test senaryosuna bagla; bu tur gorsel kod eklendi ama Playwright'ta coin artisi ureten deterministik adjacent-mine senaryosu daha da netlestirilebilir.
+- 2026-03-18: Mining click queue bug'i production'da daraltildi; helper smoke `ReferenceError: MINING_PATH_NODE_LIMIT is not defined` hatasini verdi.
+- 2026-03-18: `js/app.js` icine eksik `MINING_PATH_NODE_LIMIT = 900` sabiti eklendi. Sonraki adim production build + smoke ile click-to-move ve otomatik kazma zincirini dogrulamak.
+- 2026-03-18: Hareketten sonra hedefin erken temizlenmesi otomatik kazma zincirini kesiyordu. `advanceMiningQueuedAction` icindeki hedef temizleme kaldirildi.
+- 2026-03-18: Production smoke tekrar kosuldu. Gercek canvas click ile oyuncu `102,102 -> 103,102` ilerledi. Helper smoke'ta duvar hedefi otomatik kazildi; hedef tile `wall -> floor`, run coin `0 -> 6` oldu.
+- 2026-03-18: develop-web-game skill client aktif mining scope'u uzerinde tekrar kosuldu; gorsel screenshot/artifact'ler guncellendi.
+- 2026-03-18: Mining hareket hissi icin client-only akicilik patch'i uygulandi. Active mining sync interval'i aktif view'da 140ms'e indirildi.
+- 2026-03-18: Visual movement artik snapshot degisince onceki authoritative tile'dan yenisine zaman penceresiyle akiyor; ani geri cekilme azaltildi.
+- 2026-03-18: Queue scheduler eklendi. Move/mine cooldown'u biter bitmez sonraki aksiyon yeniden tetikleniyor; otomatik kazma bekleme bosluklari azaldi.
+- 2026-03-18: Production smoke: auto-mine testinde hedef damar `wall -> floor`, coin `0 -> 10` oldu. Move sequence screenshotlari `output/mining-move-seq-prod-2/` altinda guncel.

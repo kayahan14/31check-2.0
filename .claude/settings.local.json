@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(update-config)",
+      "WebSearch",
+      "Bash(find /c/Users/PC/Desktop/31check -type f -name *.js -o -name *.json -o -name *.sql -o -name *.html -o -name *.css)",
+      "Bash(npx vite:*)",
+      "Bash(npx vercel:*)",
+      "Bash(sshpass:*)",
+      "Bash(ssh -o StrictHostKeyChecking=no -o BatchMode=no -o ConnectTimeout=10 root@46.62.159.126 \"echo connected\")",
+      "Bash(python3 -c \"import paramiko\")",
+      "Bash(pip install:*)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(ssh:*)"
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "href": "https://31check-2-0.vercel.app/channel/casino:mining?mock=1&mockScope=mining-route-check&mockUser=alpha&mockName=Alpha",
+  "text": "Geri Getir\nTarayıcı önizleme modu\nMETİN KANALLARI\n🔥🍕-3️⃣ 1️⃣-🍕🔥\n📃-casino-1-📃\n📃-casino-2-📃\n📄-31check-yama-notlari\n📘-31check-wiki\n📢-31check-duyuru\nCASİNO\n🐉 Ejderha\n⛏️ Mining\nAL\nAlpha\n@Alpha\nMining\nTek aktif magara, 10-15 dk risk-reward kosusu ve gizli iki cikis.\n500 coin\nMagara\nEnvanter\nDukkan\nYeni magara hazirla\n\nMagara kapanmadan cikabilirsen coinler cebe gider. Cikis bulunduğu anda geri sayim baslar.\n\nMagaayi Ac\nMagara Bilgisi\nKatilim\nHer an acik\nTur Hedefi\n10-15 dk\nCikis Bulununca\n90 sn cokme\nRare Event\nYildiz Cevheri\nKostebek Tehdidi\nCoin ve agirlikla artar",
+  "hasStart": true,
+  "runtime": {
+    "session": null,
+    "profile": {
+      "stats": {
+        "runs": 0,
+        "escapes": 0,
+        "collapses": 0,
+        "bestRunCoins": 0
+      },
+      "userId": "alpha",
+      "loadout": {
+        "armor": {
+          "id": "starter-helmet",
+          "label": "Madenci Bareti",
+          "tier": 1
+        },
+        "boots": {
+          "id": "starter-boots",
+          "label": "Isci Botu",
+          "tier": 1
+        },
+        "bag": {
+          "id": "starter-bag",
+          "label": "Bez Canta",
+          "tier": 1
+        },
+        "tool": {
+          "id": "starter-lamp",
+          "label": "Fener",
+          "tier": 1
+        },
+        "pickaxe": {
+          "id": "starter-pick",
+          "label": "Demir Kazma",
+          "tier": 2,
+          "miningPower": 1
+        }
+      },
+      "displayName": "Alpha",
+      "walletCoins": 500
+    },
+    "serverNowMs": 1773827209115.2
+  }
+}

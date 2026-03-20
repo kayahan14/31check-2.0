@@ -1,0 +1,118 @@
+{
+  "setup": {
+    "player": {
+      "id": "alpha",
+      "name": "Alpha",
+      "status": "active",
+      "x": 102,
+      "y": 102,
+      "integrity": 100,
+      "runCoins": 0,
+      "totalWeight": 0,
+      "nextActionAtMs": 1773828436673,
+      "extractedAtMs": 0,
+      "lastAction": "",
+      "lastActionAtMs": 0,
+      "lastActionTargetX": 0,
+      "lastActionTargetY": 0,
+      "lastHurtAtMs": 0,
+      "facing": "right",
+      "loadout": {
+        "armor": {
+          "id": "starter-helmet",
+          "label": "Madenci Bareti",
+          "tier": 1
+        },
+        "boots": {
+          "id": "starter-boots",
+          "label": "Isci Botu",
+          "tier": 1
+        },
+        "bag": {
+          "id": "starter-bag",
+          "label": "Bez Canta",
+          "tier": 1
+        },
+        "tool": {
+          "id": "starter-lamp",
+          "label": "Fener",
+          "tier": 1
+        },
+        "pickaxe": {
+          "id": "starter-pick",
+          "label": "Demir Kazma",
+          "tier": 2,
+          "miningPower": 1
+        }
+      }
+    },
+    "target": {
+      "x": 102,
+      "y": 100,
+      "hp": 5,
+      "oreId": "coal"
+    }
+  },
+  "after": {
+    "player": {
+      "id": "alpha",
+      "name": "Alpha",
+      "status": "active",
+      "x": 102,
+      "y": 100,
+      "integrity": 100,
+      "runCoins": 10,
+      "totalWeight": 1,
+      "nextActionAtMs": 1773828444913,
+      "extractedAtMs": 0,
+      "lastAction": "move",
+      "lastActionAtMs": 1773828444815,
+      "lastActionTargetX": 102,
+      "lastActionTargetY": 100,
+      "lastHurtAtMs": 0,
+      "facing": "up",
+      "loadout": {
+        "armor": {
+          "id": "starter-helmet",
+          "label": "Madenci Bareti",
+          "tier": 1
+        },
+        "boots": {
+          "id": "starter-boots",
+          "label": "Isci Botu",
+          "tier": 1
+        },
+        "bag": {
+          "id": "starter-bag",
+          "label": "Bez Canta",
+          "tier": 1
+        },
+        "tool": {
+          "id": "starter-lamp",
+          "label": "Fener",
+          "tier": 1
+        },
+        "pickaxe": {
+          "id": "starter-pick",
+          "label": "Demir Kazma",
+          "tier": 2,
+          "miningPower": 1
+        }
+      }
+    },
+    "client": {
+      "queuedDirections": [],
+      "queuedInteraction": null,
+      "targetTile": null,
+      "bufferedInput": null,
+      "miningLocked": false
+    },
+    "finalTarget": {
+      "x": 102,
+      "y": 100,
+      "kind": "floor",
+      "hp": 0,
+      "oreId": ""
+    }
+  }
+}

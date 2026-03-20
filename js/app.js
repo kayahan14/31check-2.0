@@ -7,10 +7,15 @@ import {
   MINING_TARGET_RUN_MS,
   MINING_TILE_SIZE,
   MINING_VIEW_RADIUS,
+  advanceMiningSession,
+  attackMiningMole,
+  extractMiningPlayer,
   getMiningCurrentPlayer,
   getMiningPhase,
   getMiningTile,
   getMiningVisibleTiles,
+  mineMiningTile,
+  moveMiningPlayer,
   normalizeMiningProfile,
   normalizeMiningSession,
   renderMiningTextState
@@ -2740,6 +2745,8 @@ function connectRealtimeSocket(kind, scopeKey, handlers) {
       }
       if (message?.type === "snapshot" && message?.payload) {
         handlers?.onSnapshot?.(message.payload);
+      } else if (message?.type) {
+        handlers?.onMessage?.(message);
       }
     } catch (error) {
       console.warn(`${kind} realtime message parse failed.`, error);
@@ -2799,6 +2806,34 @@ async function initializeMiningTransport() {
     onSnapshot: (payload) => {
       applyMiningTransportPayload(payload);
     },
+    onMessage: (message) => {
+      if (message.type === "mining_position" && message.actorId !== state.currentUser.id) {
+        const visual = (state.miningVisualPlayers || {})[message.actorId];
+        if (visual) {
+          visual.targetX = Number(message.targetX ?? message.x);
+          visual.targetY = Number(message.targetY ?? message.y);
+          visual.serverX = Number(message.x);
+          visual.serverY = Number(message.y);
+          visual.speed = Number(message.speed || 4.0);
+          visual.facing = message.facing || visual.facing;
+        }
+      }
+      if (message.type === "mining_action" && message.actorId !== state.currentUser.id) {
+        const session = state.miningSession?.content;
+        if (session && session.status === "active") {
+          const actionName = message.action;
+          const data = message.data || {};
+          if (actionName === "mine") {
+            mineMiningTile(session, message.actorId, Math.round(Number(data.x)), Math.round(Number(data.y)), Date.now());
+          } else if (actionName === "attack") {
+            attackMiningMole(session, message.actorId, data.targetId, Date.now());
+          } else if (actionName === "extract") {
+            extractMiningPlayer(session, message.actorId, Date.now());
+          }
+          requestMiningCanvasFrame();
+        }
+      }
+    },
     onStatusChange: () => startMiningSessionSync()
   });
 }
@@ -2841,7 +2876,7 @@ function startMiningSessionSync() {
     if (state.miningRealtimeReady && !isCasinoMiningView()) return;
     if (!state.miningSession && !isCasinoMiningView()) return;
     void loadMiningState();
-  }, isCasinoMiningView() ? 140 : (state.miningRealtimeReady ? 2500 : 500));
+  }, isCasinoMiningView() ? 3000 : (state.miningRealtimeReady ? 5000 : 2000));
 }
 
 function stopMiningSessionSync() {
@@ -3024,13 +3059,15 @@ function advanceMiningVisualState(deltaMs) {
       }
     }
 
-    const serverDx = Number(entry.serverX ?? entry.x) - entry.x;
-    const serverDy = Number(entry.serverY ?? entry.y) - entry.y;
-    const serverDist = Math.sqrt(serverDx * serverDx + serverDy * serverDy);
-    if (serverDist > 0.5 && serverDist < 5) {
-      const correction = 1 - Math.exp(-deltaMs / 250);
-      entry.x += serverDx * correction;
-      entry.y += serverDy * correction;
+    if (entry.id !== state.currentUser.id) {
+      const serverDx = Number(entry.serverX ?? entry.x) - entry.x;
+      const serverDy = Number(entry.serverY ?? entry.y) - entry.y;
+      const serverDist = Math.sqrt(serverDx * serverDx + serverDy * serverDy);
+      if (serverDist > 0.5 && serverDist < 5) {
+        const correction = 1 - Math.exp(-deltaMs / 250);
+        entry.x += serverDx * correction;
+        entry.y += serverDy * correction;
+      }
     }
   }
 
@@ -3097,49 +3134,115 @@ async function handleMiningUiAction(action) {
 
 async function performMiningAction(action, meta = {}, options = {}) {
   const { silent = false } = options;
-  if (state.interactiveActionLocks["mining"]) return;
-  state.interactiveActionLocks["mining"] = true;
-  try {
-    if (action === "move" && meta.targetX !== undefined && meta.targetY !== undefined) {
-      applyOptimisticMiningMove(meta.targetX, meta.targetY);
-    }
-    const response = await fetch(buildGameApiUrl("/api/mining"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scopeKey: getMiningScopeKey(),
-        action,
-        actor: {
-          id: state.currentUser.id,
-          name: state.currentUser.displayName
-        },
-        ...meta
-      })
-    });
-    if (!response.ok) {
-      throw new Error("Mining action failed.");
-    }
-    const payload = await response.json();
-    applyMiningTransportPayload(payload, { forceRender: true });
-    if (payload.errorCode) {
-      const label = translateMiningError(payload.errorCode);
-      if (label && !silent) showToast(label);
-    }
-    return payload;
-  } catch (error) {
-    console.warn("Mining action failed.", error);
-    if (!silent) showToast("Mining istegi basarisiz.");
+  const session = state.miningSession?.content;
+  if (!session || session.status !== "active") {
+    if (!silent) showToast("Aktif bir maden yok.");
     return null;
-  } finally {
-    delete state.interactiveActionLocks["mining"];
-    const bufferedInput = state.miningBufferedInput;
-    if (bufferedInput) {
-      state.miningBufferedInput = null;
-      window.setTimeout(() => {
-        void dispatchMiningCanvasIntent(bufferedInput);
-      }, 0);
+  }
+
+  const playerId = state.currentUser.id;
+  const now = Date.now();
+  let changed = false;
+  let errorCode = "";
+
+  advanceMiningSession(session, now);
+
+  if (action === "move") {
+    const result = moveMiningPlayer(session, playerId, Number(meta.targetX ?? 0), Number(meta.targetY ?? 0), now);
+    changed = result.changed;
+    errorCode = result.reason || "";
+    if (changed) {
+      const player = getMiningCurrentPlayer(session, playerId);
+      if (player) {
+        sendMiningWs("mining_position", {
+          x: player.x,
+          y: player.y,
+          targetX: player.targetX,
+          targetY: player.targetY,
+          facing: player.facing,
+          speed: player.speed
+        });
+      }
+    }
+  } else if (action === "mine") {
+    const result = mineMiningTile(session, playerId, Math.round(Number(meta.x)), Math.round(Number(meta.y)), now);
+    changed = result.changed;
+    errorCode = result.reason || "";
+    if (changed) {
+      sendMiningWs("mining_action", { action: "mine", data: { x: meta.x, y: meta.y } });
+    }
+  } else if (action === "attack") {
+    const result = attackMiningMole(session, playerId, meta.targetId, now);
+    changed = result.changed;
+    errorCode = result.reason || "";
+    if (changed) {
+      sendMiningWs("mining_action", { action: "attack", data: { targetId: meta.targetId } });
+    }
+  } else if (action === "extract") {
+    const result = extractMiningPlayer(session, playerId, now);
+    changed = result.changed;
+    errorCode = result.reason || "";
+    if (changed) {
+      sendMiningWs("mining_action", { action: "extract", data: {} });
+    }
+  } else if (action === "start_lobby" || action === "join_lobby") {
+    try {
+      const response = await fetch(buildGameApiUrl("/api/mining"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scopeKey: getMiningScopeKey(),
+          action,
+          actor: {
+            id: state.currentUser.id,
+            name: state.currentUser.displayName
+          },
+          ...meta
+        })
+      });
+      if (!response.ok) throw new Error("Mining action failed.");
+      const payload = await response.json();
+      applyMiningTransportPayload(payload, { forceRender: true });
+      if (payload.errorCode) {
+        const label = translateMiningError(payload.errorCode);
+        if (label && !silent) showToast(label);
+      }
+      return payload;
+    } catch (error) {
+      console.warn("Mining action failed.", error);
+      if (!silent) showToast("Mining istegi basarisiz.");
+      return null;
     }
   }
+
+  if (changed) {
+    syncMiningVisualState(session);
+    requestMiningCanvasFrame();
+    if (!updateMiningActiveStageDom({ repaintCanvas: true })) {
+      render();
+    }
+  }
+
+  if (errorCode) {
+    const label = translateMiningError(errorCode);
+    if (label && !silent) showToast(label);
+  }
+
+  const bufferedInput = state.miningBufferedInput;
+  if (bufferedInput) {
+    state.miningBufferedInput = null;
+    window.setTimeout(() => {
+      void dispatchMiningCanvasIntent(bufferedInput);
+    }, 0);
+  }
+
+  return { ok: true };
+}
+
+function sendMiningWs(type, payload) {
+  const socket = state.miningRealtimeSocket;
+  if (!socket || socket.readyState !== socket.OPEN) return;
+  socket.send(JSON.stringify({ type, ...payload }));
 }
 
 function translateMiningError(errorCode) {

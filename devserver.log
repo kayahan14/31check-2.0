@@ -1,0 +1,49 @@
+
+> 31check-activity@1.0.0 dev
+> concurrently "npm:server:dev" "npm:client:dev" --host 127.0.0.1 --port 4173
+
+[client:dev] 
+[client:dev] > 31check-activity@1.0.0 client:dev
+[client:dev] > vite
+[client:dev] 
+[server:dev] 
+[server:dev] > 31check-activity@1.0.0 server:dev
+[server:dev] > node server/server.js
+[server:dev] 
+[server:dev] node:events:486
+[server:dev]       throw er; // Unhandled 'error' event
+[server:dev]       ^
+[server:dev] 
+[server:dev] Error: listen EADDRINUSE: address already in use :::3001
+[server:dev]     at Server.setupListenHandle [as _listen2] (node:net:1948:16)
+[server:dev]     at listenInCluster (node:net:2005:12)
+[server:dev]     at Server.listen (node:net:2110:7)
+[server:dev]     at file:///C:/Users/PC/Desktop/31check/server/server.js:139:8
+[server:dev]     at ModuleJob.run (node:internal/modules/esm/module_job:430:25)
+[server:dev]     at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)
+[server:dev]     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+[server:dev] Emitted 'error' event on Server instance at:
+[server:dev]     at emitErrorNT (node:net:1984:8)
+[server:dev]     at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+[server:dev]   code: 'EADDRINUSE',
+[server:dev]   errno: -4091,
+[server:dev]   syscall: 'listen',
+[server:dev]   address: '::',
+[server:dev]   port: 3001
+[server:dev] }
+[server:dev] 
+[server:dev] Node.js v24.14.0
+[server:dev] npm run server:dev exited with code 1
+[client:dev] Port 5173 is in use, trying another one...
+[client:dev] 
+[client:dev]   [32m[1mVITE[22m v7.3.1[39m  [2mready in [0m[1m242[22m[2m[0m ms[22m
+[client:dev] 
+[client:dev]   [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5174[22m/[39m
+[client:dev] [2m  [32m➜[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m
+[client:dev] [2m10:38:11[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mjs/app.js[22m
+[client:dev] [2m10:39:57[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mjs/app.js[22m
+[client:dev] [2m10:42:44[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mjs/app.js[22m
+[client:dev] [2m10:43:44[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mjs/app.js[22m
+[client:dev] ^C^C
+[client:dev] npm run client:dev exited with code 3221225786
+^C
