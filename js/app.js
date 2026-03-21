@@ -94,9 +94,9 @@ const DRAGON_SPEED_STAGES = [
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const MINING_ACTION_TICK_MS = 55;
-const MINING_MIN_ZOOM = 0.5;
+const MINING_MIN_ZOOM = 0.25;
 const MINING_MAX_ZOOM = 1.8;
-const MINING_DEFAULT_ZOOM = 1.0;
+const MINING_DEFAULT_ZOOM = 0.7;
 const MINING_BASE_VISIBLE_TILES = 15.5;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
@@ -3085,6 +3085,11 @@ function tickMiningCanvasFrame(frameAtMs) {
       localVisual.targetX = localPlayer.targetX;
       localVisual.targetY = localPlayer.targetY;
       localVisual.facing = localPlayer.facing;
+      
+      localVisual.lastAction = localPlayer.lastAction;
+      if (localPlayer.lastActionAtMs > (localVisual.lastActionAtMs || 0)) {
+        localVisual.lastActionAtMs = localPlayer.lastActionAtMs;
+      }
     }
   }
 
@@ -3168,9 +3173,6 @@ function advanceMiningVisualState(deltaMs) {
     }
   }
 
-  const cameraBlend = 1 - Math.exp(-deltaMs / 105);
-  state.miningCameraX += (localVisual.x - state.miningCameraX) * cameraBlend;
-  state.miningCameraY += (localVisual.y - state.miningCameraY) * cameraBlend;
 }
 
 function getMiningTransportRenderKey(sessionRecord, profile) {
