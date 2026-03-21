@@ -94,7 +94,7 @@ const DRAGON_SPEED_STAGES = [
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const MINING_ACTION_TICK_MS = 55;
-const MINING_MIN_ZOOM = 0.25;
+const MINING_MIN_ZOOM = 0.1;
 const MINING_MAX_ZOOM = 1.8;
 const MINING_DEFAULT_ZOOM = 0.7;
 const MINING_BASE_VISIBLE_TILES = 15.5;
@@ -3025,18 +3025,8 @@ function syncMiningVisualState(session, now = getMiningNow()) {
   const localVisual = nextVisuals[state.currentUser.id] || null;
   if (!localVisual) return;
 
-  const shouldSnapCamera = !previousLocal
-    || !Number.isFinite(state.miningCameraX)
-    || !Number.isFinite(state.miningCameraY)
-    || (Math.sqrt((state.miningCameraX - localVisual.x) ** 2 + (state.miningCameraY - localVisual.y) ** 2) > 10);
-  if (shouldSnapCamera) {
-    state.miningCameraX = localVisual.x;
-    state.miningCameraY = localVisual.y;
-  } else {
-    const lerpFactor = 1 - Math.pow(0.001, deltaMs / 1000);
-    state.miningCameraX += (localVisual.x - state.miningCameraX) * lerpFactor;
-    state.miningCameraY += (localVisual.y - state.miningCameraY) * lerpFactor;
-  }
+  state.miningCameraX = localVisual.x;
+  state.miningCameraY = localVisual.y;
 }
 
 function startMiningCanvasLoop() {
@@ -3666,13 +3656,13 @@ function handleMiningCanvasClick(event) {
 
   if (mole) {
     state.miningAutoAction = { type: "attack", targetId: mole.id, tileX, tileY };
-    void performMiningAction("move", { targetX, targetY }, { silent: true });
+    if (distToTile > 1.4) void performMiningAction("move", { targetX, targetY }, { silent: true });
   } else if (tile.kind === "wall") {
     state.miningAutoAction = { type: "mine", x: tileX, y: tileY, tileX, tileY };
-    void performMiningAction("move", { targetX, targetY }, { silent: true });
+    if (distToTile > 1.4) void performMiningAction("move", { targetX, targetY }, { silent: true });
   } else if (tile.kind === "exit") {
     state.miningAutoAction = { type: "extract", x: tileX, y: tileY, tileX, tileY };
-    void performMiningAction("move", { targetX, targetY }, { silent: true });
+    if (distToTile > 1.4) void performMiningAction("move", { targetX, targetY }, { silent: true });
   } else {
     state.miningAutoAction = null;
     void performMiningAction("move", { targetX, targetY }, { silent: true });
