@@ -3135,7 +3135,7 @@ function advanceMiningVisualState(deltaMs) {
     const tileCX = (aa.tileX ?? aa.x) + 0.5;
     const tileCY = (aa.tileY ?? aa.y) + 0.5;
     const distToTarget = Math.sqrt((localVisual.x - tileCX) ** 2 + ((localVisual.y + 0.24) - tileCY) ** 2);
-    if (distToTarget <= 1.4) {
+    if (distToTarget <= 1.6) {
       const action = aa.type;
       const session = state.miningSession?.content;
 
@@ -3313,7 +3313,11 @@ async function performMiningAction(action, meta = {}, options = {}) {
 
   if (errorCode) {
     const label = translateMiningError(errorCode);
-    // if (label && !silent) showToast(label); // Removed showToast as per instruction
+    if (label) {
+      if (!silent || (errorCode !== "cooldown" && errorCode !== "range" && errorCode !== "invalid-target")) {
+        showToast(label);
+      }
+    }
   }
 
   if (changed) {
@@ -3656,13 +3660,13 @@ function handleMiningCanvasClick(event) {
 
   if (mole) {
     state.miningAutoAction = { type: "attack", targetId: mole.id, tileX, tileY };
-    if (distToTile > 1.4) void performMiningAction("move", { targetX, targetY }, { silent: true });
+    if (distToTile > 1.6) void performMiningAction("move", { targetX, targetY }, { silent: true });
   } else if (tile.kind === "wall") {
     state.miningAutoAction = { type: "mine", x: tileX, y: tileY, tileX, tileY };
-    if (distToTile > 1.4) void performMiningAction("move", { targetX, targetY }, { silent: true });
+    if (distToTile > 1.6) void performMiningAction("move", { targetX, targetY }, { silent: true });
   } else if (tile.kind === "exit") {
     state.miningAutoAction = { type: "extract", x: tileX, y: tileY, tileX, tileY };
-    if (distToTile > 1.4) void performMiningAction("move", { targetX, targetY }, { silent: true });
+    if (distToTile > 1.6) void performMiningAction("move", { targetX, targetY }, { silent: true });
   } else {
     state.miningAutoAction = null;
     void performMiningAction("move", { targetX, targetY }, { silent: true });
