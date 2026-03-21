@@ -3032,6 +3032,10 @@ function syncMiningVisualState(session, now = getMiningNow()) {
   if (shouldSnapCamera) {
     state.miningCameraX = localVisual.x;
     state.miningCameraY = localVisual.y;
+  } else {
+    const lerpFactor = 1 - Math.pow(0.001, deltaMs / 1000);
+    state.miningCameraX += (localVisual.x - state.miningCameraX) * lerpFactor;
+    state.miningCameraY += (localVisual.y - state.miningCameraY) * lerpFactor;
   }
 }
 
@@ -3131,16 +3135,36 @@ function advanceMiningVisualState(deltaMs) {
   const localVisual = state.miningVisualPlayers[state.currentUser.id] || null;
   if (!localVisual) return;
 
-  if (state.miningAutoAction && !state.interactiveActionLocks["mining"]) {
+  if (state.miningAutoAction) {
     const aa = state.miningAutoAction;
     const tileCX = (aa.tileX ?? aa.x) + 0.5;
     const tileCY = (aa.tileY ?? aa.y) + 0.5;
     const distToTarget = Math.sqrt((localVisual.x - tileCX) ** 2 + ((localVisual.y + 0.24) - tileCY) ** 2);
-    if (distToTarget <= 1.6) {
+    if (distToTarget <= 1.4) {
       const action = aa.type;
+      const session = state.miningSession?.content;
+
+      if (action === "mine") {
+        const tile = session.map ? session.map.tiles.find(t => t.x === aa.tileX && t.y === aa.tileY) : null;
+        if (!tile || tile.kind !== "wall") {
+          state.miningAutoAction = null;
+          return;
+        }
+      } else if (action === "attack") {
+        const mole = (session.moles || []).find(m => m.id === aa.targetId);
+        if (!mole || mole.hp <= 0) {
+          state.miningAutoAction = null;
+          return;
+        }
+      }
+
       const meta = action === "mine" ? { x: aa.x, y: aa.y } : { targetId: aa.targetId };
-      state.miningAutoAction = null;
-      void performMiningAction(action, meta, { silent: true });
+      const now = Date.now();
+      if (!localVisual.lastActionAtMs || now - localVisual.lastActionAtMs > 250) { // Throttle client-side
+        void performMiningAction(action, meta, { silent: true });
+        localVisual.lastActionAtMs = now;
+      }
+      if (action === "extract") state.miningAutoAction = null;
     }
   }
 
@@ -3225,7 +3249,7 @@ async function performMiningAction(action, meta = {}, options = {}) {
       applyMiningTransportPayload(payload, { forceRender: true });
       if (payload.errorCode) {
         const label = translateMiningError(payload.errorCode);
-        if (label && !silent) showToast(label);
+        // if (label && !silent) showToast(label); // Removed showToast as per instruction
       }
       return payload;
     } catch (error) {
@@ -3266,7 +3290,7 @@ async function performMiningAction(action, meta = {}, options = {}) {
       }
     }
   } else if (action === "mine") {
-    const result = mineMiningTile(session, playerId, Math.round(Number(meta.x)), Math.round(Number(meta.y)), now);
+    const result = mineMiningTile(session, playerId, Math.round(Number(meta.x ?? 0)), Math.round(Number(meta.y ?? 0)), now);
     changed = result.changed;
     errorCode = result.reason || "";
     if (changed) {
@@ -3295,17 +3319,17 @@ async function performMiningAction(action, meta = {}, options = {}) {
     }
   }
 
+  if (errorCode) {
+    const label = translateMiningError(errorCode);
+    // if (label && !silent) showToast(label); // Removed showToast as per instruction
+  }
+
   if (changed) {
     syncMiningVisualState(session);
     requestMiningCanvasFrame();
     if (!updateMiningActiveStageDom({ repaintCanvas: true })) {
       render();
     }
-  }
-
-  if (errorCode) {
-    const label = translateMiningError(errorCode);
-    if (label && !silent) showToast(label);
   }
 
   const bufferedInput = state.miningBufferedInput;
@@ -3636,35 +3660,20 @@ function handleMiningCanvasClick(event) {
   const tile = getMiningTile(session.map, tileX, tileY);
   if (!tile) return;
 
-  const tileCenterX = tileX + 0.5;
-  const tileCenterY = tileY + 0.5;
-  const distToTile = Math.sqrt((player.x - tileCenterX) ** 2 + ((player.y + 0.24) - tileCenterY) ** 2);
-
   const mole = (session.moles || []).find((m) => m.x === tileX && m.y === tileY);
 
   if (mole) {
-    if (distToTile <= 1.6) {
-      void performMiningAction("attack", { targetId: mole.id });
-    } else {
-      state.miningAutoAction = { type: "attack", targetId: mole.id, tileX, tileY };
-      void performMiningAction("move", { targetX, targetY });
-    }
-    return;
-  }
-
-  if (tile.kind === "wall") {
-    if (distToTile <= 1.6) {
-      void performMiningAction("mine", { x: tileX, y: tileY });
-    } else {
-      state.miningAutoAction = { type: "mine", x: tileX, y: tileY };
-      void performMiningAction("move", { targetX, targetY });
-    }
-    return;
-  }
-
-  if (tile.kind === "floor" || tile.kind === "exit") {
+    state.miningAutoAction = { type: "attack", targetId: mole.id, tileX, tileY };
+    void performMiningAction("move", { targetX, targetY }, { silent: true });
+  } else if (tile.kind === "wall") {
+    state.miningAutoAction = { type: "mine", x: tileX, y: tileY, tileX, tileY };
+    void performMiningAction("move", { targetX, targetY }, { silent: true });
+  } else if (tile.kind === "exit") {
+    state.miningAutoAction = { type: "extract", x: tileX, y: tileY, tileX, tileY };
+    void performMiningAction("move", { targetX, targetY }, { silent: true });
+  } else {
     state.miningAutoAction = null;
-    void performMiningAction("move", { targetX, targetY });
+    void performMiningAction("move", { targetX, targetY }, { silent: true });
   }
 }
 
