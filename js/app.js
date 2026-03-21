@@ -1937,6 +1937,8 @@ function isNearBottom(element) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+
+
 function formatMessageTime(message) {
   const timestamp = normalizeMessageTimestamp(message);
   if (!timestamp) {
@@ -3025,8 +3027,16 @@ function syncMiningVisualState(session, now = getMiningNow()) {
   const localVisual = nextVisuals[state.currentUser.id] || null;
   if (!localVisual) return;
 
-  state.miningCameraX = localVisual.x;
-  state.miningCameraY = localVisual.y;
+  const deadzone = 1.0; 
+  const dx = localVisual.x - state.miningCameraX;
+  const dy = localVisual.y - state.miningCameraY;
+  
+  if (Math.abs(dx) > deadzone) {
+    state.miningCameraX += dx - Math.sign(dx) * deadzone;
+  }
+  if (Math.abs(dy) > deadzone) {
+    state.miningCameraY += dy - Math.sign(dy) * deadzone;
+  }
 }
 
 function startMiningCanvasLoop() {
@@ -3140,7 +3150,7 @@ function advanceMiningVisualState(deltaMs) {
       const session = state.miningSession?.content;
 
       if (action === "mine") {
-        const tile = session.map ? session.map.tiles.find(t => t.x === aa.tileX && t.y === aa.tileY) : null;
+        const tile = session.map ? getMiningTile(session.map, aa.tileX, aa.tileY) : null;
         if (!tile || tile.kind !== "wall") {
           state.miningAutoAction = null;
           return;
@@ -3200,9 +3210,13 @@ async function handleMiningUiAction(action) {
   if (action === "start_lobby" || action === "join_lobby" || action === "extract") {
     await performMiningAction(action);
   }
-  if (action === "leave_session") {
-    void performMiningAction("abandon", {}, { silent: true });
+  if (action === "enter-map") {
+    state.miningViewTab = "map";
     render();
+    return;
+  }
+  if (action === "leave_session") {
+    await performMiningAction("extract");
   }
 }
 
@@ -3447,15 +3461,20 @@ function renderMiningRealtimeView() {
     return `<section class="mining-screen"><div class="chat-loading"><div class="chat-loading-spinner"></div><div class="chat-loading-text">Mining yukleniyor...</div></div></section>`;
   }
 
-  const menu = !isActiveRun ? `
+  const showMap = isActiveRun && tab === "map";
+
+  const menu = !showMap ? `
     <div class="mining-menu-switch">
-      <button type="button" class="mining-menu-tab ${tab === "entrance" ? "active" : ""}" data-mining-action="show-entrance">Magara</button>
+      <button type="button" class="mining-menu-tab ${tab === "entrance" || tab === "map" ? "active" : ""}" data-mining-action="show-entrance">Magara</button>
       <button type="button" class="mining-menu-tab ${tab === "inventory" ? "active" : ""}" data-mining-action="show-inventory">Envanter</button>
       <button type="button" class="mining-menu-tab ${tab === "shop" ? "active" : ""}" data-mining-action="show-shop">Dukkan</button>
     </div>
   ` : "";
 
-  if (!session || isFinished) {
+  if (!session || isFinished || !showMap) {
+    const isLoss = phase === "collapsed";
+    const isWin = phase === "finished";
+    
     return `
       <section class="mining-screen">
         <div class="mining-shell">
@@ -3469,15 +3488,23 @@ function renderMiningRealtimeView() {
           ${menu}
           <div class="mining-main-grid">
             <div class="mining-card mining-hero">
-              <div class="mining-hero-copy">
-                <strong>Yeni magara hazirla</strong>
-                <p>Magara kapanmadan cikabilirsen coinler cebe gider. Cikis bulunduğu anda geri sayim baslar.</p>
-              </div>
-              <button type="button" class="btn dragon-modal-action" data-mining-action="start_lobby">Magaayi Ac</button>
-              ${session ? `<div class="mining-summary-chip ${phase === "collapsed" ? "is-loss" : "is-win"}">${escapeHtml(session.summary || "Son seans tamamlandi.")}</div>` : ""}
+              ${tab === "entrance" || tab === "map" ? `
+                <div class="mining-hero-copy">
+                  <strong>${isActiveRun ? "Aktif magara acik" : "Yeni magara hazirla"}</strong>
+                  <p>${isActiveRun ? "Su an iceride devam eden bir kazi var. Hemen katilabilirsin." : "Magara kapanmadan cikabilirsen coinler cebe gider. Cikis bulunduğu anda geri sayim baslar."}</p>
+                </div>
+                ${isActiveRun ? `
+                  <button type="button" class="btn btn-primary" data-mining-action="enter-map">Magaraya Gir</button>
+                ` : `
+                  <button type="button" class="btn dragon-modal-action" data-mining-action="start_lobby">Magarayi Ac</button>
+                `}
+                ${session && isFinished ? `<div class="mining-summary-chip ${isLoss ? "is-loss" : "is-win"}">${escapeHtml(session.summary || "Son seans tamamlandi.")}</div>` : ""}
+              ` : `
+                ${renderMiningSecondaryPanel(tab, profile)}
+              `}
             </div>
             <div class="mining-card">
-              ${renderMiningSecondaryPanel(tab, profile)}
+              ${tab === "entrance" || tab === "map" ? renderMiningSecondaryPanel("info", profile) : renderMiningSecondaryPanel("info", profile)}
             </div>
           </div>
         </div>
