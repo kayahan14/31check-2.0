@@ -19,8 +19,12 @@ import {
   moveMiningPlayer,
   normalizeMiningProfile,
   normalizeMiningSession,
-  renderMiningTextState
+  renderMiningTextState,
+  createMiningSession,
+  joinMiningSession
 } from "../shared/mining-core.js";
+
+const OFFLINE_MODE = true; // Temporary mode to isolate physics from network
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const GAME_BACKEND_URL = normalizeBackendOrigin(import.meta.env.VITE_GAME_BACKEND_URL || "");
@@ -2802,6 +2806,12 @@ async function initializeMiningTransport() {
   startMiningSessionSync();
   startMiningUiTicker();
   window.advanceTime = (ms) => new Promise((resolve) => window.setTimeout(resolve, Number(ms || 0)));
+  
+  if (OFFLINE_MODE) {
+    state.miningRealtimeReady = true;
+    return;
+  }
+
   connectRealtimeSocket("mining", getMiningScopeKey(), {
     onHeartbeat: syncMiningServerClock,
     onSnapshot: (payload) => {
@@ -2862,6 +2872,18 @@ async function loadMiningState({ initial = false } = {}) {
   if (initial) {
     state.miningStateLoading = true;
     if (isCasinoMiningView()) render();
+  }
+
+  if (OFFLINE_MODE) {
+    if (initial) {
+      if (!state.miningSession) {
+        state.miningSession = { id: "local-session", content: createMiningSession(state.currentUser, state.miningProfile) };
+        syncMiningVisualState(state.miningSession.content);
+      }
+      state.miningStateLoading = false;
+      if (isCasinoMiningView()) render();
+    }
+    return;
   }
 
   try {
@@ -3164,7 +3186,7 @@ async function handleMiningUiAction(action) {
   }
   if (action === "leave_session") {
     void performMiningAction("abandon", {}, { silent: true });
-    selectChannel("1");
+    render();
   }
 }
 
@@ -3172,6 +3194,18 @@ async function performMiningAction(action, meta = {}, options = {}) {
   const { silent = false } = options;
 
   if (action === "start_lobby" || action === "join_lobby") {
+    if (OFFLINE_MODE) {
+      if (action === "start_lobby") {
+        state.miningSession = { id: "local-session", content: createMiningSession(state.currentUser, state.miningProfile) };
+      } else if (action === "join_lobby" && state.miningSession?.content) {
+        joinMiningSession(state.miningSession.content, state.currentUser, state.miningProfile?.loadout, Date.now());
+      }
+      syncMiningVisualState(state.miningSession?.content);
+      if (!silent) showToast(action === "start_lobby" ? "Maden olusturuldu (Offline)" : "Kaziya katildin (Offline)");
+      render();
+      return { session: state.miningSession };
+    }
+
     try {
       const response = await fetch(buildGameApiUrl("/api/mining"), {
         method: "POST",
