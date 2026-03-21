@@ -3135,7 +3135,7 @@ function advanceMiningVisualState(deltaMs) {
     const aa = state.miningAutoAction;
     const tileCX = (aa.tileX ?? aa.x) + 0.5;
     const tileCY = (aa.tileY ?? aa.y) + 0.5;
-    const distToTarget = Math.sqrt((localVisual.x - tileCX) ** 2 + ((localVisual.y + 0.74) - tileCY) ** 2);
+    const distToTarget = Math.sqrt((localVisual.x - tileCX) ** 2 + ((localVisual.y + 0.24) - tileCY) ** 2);
     if (distToTarget <= 1.6) {
       const action = aa.type;
       const meta = action === "mine" ? { x: aa.x, y: aa.y } : { targetId: aa.targetId };
@@ -3629,7 +3629,7 @@ function handleMiningCanvasClick(event) {
   const tileY = Math.floor(clickWorldY);
 
   const targetX = worldX;
-  const targetY = clickWorldY - 0.74; // karakterin ayaklarini tam imlece oturt
+  const targetY = clickWorldY - 0.24; // karakterin merkezini degil ayaklarini hizala
 
   state.miningClickRipple = { x: worldX, y: clickWorldY, startMs: getMiningNow() };
 
@@ -3638,7 +3638,7 @@ function handleMiningCanvasClick(event) {
 
   const tileCenterX = tileX + 0.5;
   const tileCenterY = tileY + 0.5;
-  const distToTile = Math.sqrt((player.x - tileCenterX) ** 2 + ((player.y + 0.74) - tileCenterY) ** 2);
+  const distToTile = Math.sqrt((player.x - tileCenterX) ** 2 + ((player.y + 0.24) - tileCenterY) ** 2);
 
   const mole = (session.moles || []).find((m) => m.x === tileX && m.y === tileY);
 
@@ -4164,7 +4164,7 @@ function drawMiningPlayerSprite(context, metrics, entry, now) {
   const direction = facing === "left" ? -1 : 1;
 
   context.save();
-  context.translate(rect.centerX, rect.centerY + bob);
+  context.translate(rect.x, rect.y + bob);
   if (hurtStrength > 0) {
     context.translate(direction * -rect.size * 0.04 * hurtStrength, 0);
   }
@@ -4212,8 +4212,8 @@ function drawMiningPlayerName(context, rect, name, isLocal) {
   context.fillStyle = isLocal ? "#f7fbff" : "rgba(240, 247, 255, 0.92)";
   context.strokeStyle = "rgba(0, 0, 0, 0.38)";
   context.lineWidth = Math.max(1, rect.size * 0.014);
-  context.strokeText(label, rect.centerX, textY);
-  context.fillText(label, rect.centerX, textY);
+  context.strokeText(label, rect.x, textY);
+  context.fillText(label, rect.x, textY);
   context.restore();
 }
 
