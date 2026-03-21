@@ -94,9 +94,9 @@ const DRAGON_SPEED_STAGES = [
 ];
 const DRAGON_ALL_CASHED_OUT_SPEED = 4;
 const MINING_ACTION_TICK_MS = 55;
-const MINING_MIN_ZOOM = 1;
+const MINING_MIN_ZOOM = 0.5;
 const MINING_MAX_ZOOM = 1.8;
-const MINING_DEFAULT_ZOOM = 1.3;
+const MINING_DEFAULT_ZOOM = 1.0;
 const MINING_BASE_VISIBLE_TILES = 15.5;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";

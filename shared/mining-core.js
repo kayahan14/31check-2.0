@@ -334,6 +334,16 @@ export function mineMiningTile(game, playerId, targetX, targetY, now = Date.now(
   const tileCenterX = Math.round(Number(targetX)) + 0.5;
   const tileCenterY = Math.round(Number(targetY)) + 0.5;
   if (euclidean(player.x, player.y, tileCenterX, tileCenterY) > MINING_MINE_RANGE) return { changed: false, reason: "range" };
+
+  const pTileX = Math.floor(player.x);
+  const pTileY = Math.floor(player.y);
+  if (pTileX !== targetX && pTileY !== targetY) {
+    const tile1 = getMiningTile(game.map, targetX, pTileY);
+    const tile2 = getMiningTile(game.map, pTileX, targetY);
+    if (tile1?.kind === "wall" && tile2?.kind === "wall") {
+      return { changed: false, reason: "range" }; // Diagonally blocked
+    }
+  }
   if (now < Number(player.nextActionAtMs || 0)) return { changed: false, reason: "cooldown" };
   if (getPickaxeTier(player) < Number(tile.requiredTier || 1)) return { changed: false, reason: "pick-tier" };
 
@@ -409,6 +419,16 @@ export function attackMiningMole(game, playerId, targetId, now = Date.now()) {
   const moleCenterX = mole.x + 0.5;
   const moleCenterY = mole.y + 0.5;
   if (euclidean(player.x, player.y, moleCenterX, moleCenterY) > MINING_ATTACK_RANGE) return { changed: false, reason: "range" };
+
+  const pTileX = Math.floor(player.x);
+  const pTileY = Math.floor(player.y);
+  if (pTileX !== mole.x && pTileY !== mole.y) {
+    const tile1 = getMiningTile(game.map, mole.x, pTileY);
+    const tile2 = getMiningTile(game.map, pTileX, mole.y);
+    if (tile1?.kind === "wall" && tile2?.kind === "wall") {
+      return { changed: false, reason: "range" }; // Diagonally blocked
+    }
+  }
   if (now < Number(player.nextActionAtMs || 0)) return { changed: false, reason: "cooldown" };
 
   mole.hp = Math.max(0, Number(mole.hp || 0) - 18);
