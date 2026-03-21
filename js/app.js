@@ -2877,7 +2877,7 @@ async function loadMiningState({ initial = false } = {}) {
   if (OFFLINE_MODE) {
     if (initial) {
       if (!state.miningSession) {
-        state.miningSession = { id: "local-session", content: createMiningSession(state.currentUser, state.miningProfile) };
+        state.miningSession = { id: "local-session", content: normalizeMiningSession(createMiningSession(state.currentUser, state.miningProfile)) };
         syncMiningVisualState(state.miningSession.content);
       }
       state.miningStateLoading = false;
@@ -3196,7 +3196,7 @@ async function performMiningAction(action, meta = {}, options = {}) {
   if (action === "start_lobby" || action === "join_lobby") {
     if (OFFLINE_MODE) {
       if (action === "start_lobby") {
-        state.miningSession = { id: "local-session", content: createMiningSession(state.currentUser, state.miningProfile) };
+        state.miningSession = { id: "local-session", content: normalizeMiningSession(createMiningSession(state.currentUser, state.miningProfile)) };
       } else if (action === "join_lobby" && state.miningSession?.content) {
         joinMiningSession(state.miningSession.content, state.currentUser, state.miningProfile?.loadout, Date.now());
       }
