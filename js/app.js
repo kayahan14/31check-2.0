@@ -3113,7 +3113,7 @@ function advanceMiningVisualState(deltaMs) {
     const aa = state.miningAutoAction;
     const tileCX = (aa.tileX ?? aa.x) + 0.5;
     const tileCY = (aa.tileY ?? aa.y) + 0.5;
-    const distToTarget = Math.sqrt((localVisual.x - tileCX) ** 2 + ((localVisual.y + 0.24) - tileCY) ** 2);
+    const distToTarget = Math.sqrt((localVisual.x - tileCX) ** 2 + ((localVisual.y + 0.74) - tileCY) ** 2);
     if (distToTarget <= 1.6) {
       const action = aa.type;
       const meta = action === "mine" ? { x: aa.x, y: aa.y } : { targetId: aa.targetId };
@@ -3595,7 +3595,7 @@ function handleMiningCanvasClick(event) {
   const tileY = Math.floor(clickWorldY);
 
   const targetX = worldX;
-  const targetY = clickWorldY - 0.24; // karakterin merkezini degil ayaklarini hizala
+  const targetY = clickWorldY - 0.74; // karakterin ayaklarini tam imlece oturt
 
   state.miningClickRipple = { x: worldX, y: clickWorldY, startMs: getMiningNow() };
 
@@ -3604,7 +3604,7 @@ function handleMiningCanvasClick(event) {
 
   const tileCenterX = tileX + 0.5;
   const tileCenterY = tileY + 0.5;
-  const distToTile = Math.sqrt((player.x - tileCenterX) ** 2 + ((player.y + 0.24) - tileCenterY) ** 2);
+  const distToTile = Math.sqrt((player.x - tileCenterX) ** 2 + ((player.y + 0.74) - tileCenterY) ** 2);
 
   const mole = (session.moles || []).find((m) => m.x === tileX && m.y === tileY);
 

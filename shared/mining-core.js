@@ -758,24 +758,17 @@ function advancePlayerPosition(player, map, now) {
 
   let px = player.x;
   let py = player.y;
-  let remaining = moveDist;
 
-  while (remaining > 0.001) {
-    const step = Math.min(MINING_MOVE_STEP, remaining);
-    const newX = px + dirX * step;
-    const newY = py + dirY * step;
+  const newX = px + dirX * moveDist;
+  const newY = py + dirY * moveDist;
 
-    if (canOccupy(map, newX, newY)) {
-      px = newX;
-      py = newY;
-    } else if (canOccupy(map, newX, py)) {
-      px = newX;
-    } else if (canOccupy(map, px, newY)) {
-      py = newY;
-    } else {
-      break;
-    }
-    remaining -= step;
+  if (canOccupy(map, newX, newY)) {
+    px = newX;
+    py = newY;
+  } else if (canOccupy(map, newX, py)) {
+    px = newX;
+  } else if (canOccupy(map, px, newY)) {
+    py = newY;
   }
 
   // If physics stuck completely, clear target lock
