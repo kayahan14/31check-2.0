@@ -8,3 +8,8 @@ figma-shot.png
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+output/
+deneme/
+*.log
+client*.log
+devserver.log

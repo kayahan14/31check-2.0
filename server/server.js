@@ -6,6 +6,7 @@ import miningHandler, { getMiningTransportPayload } from "../api/mining.js";
 import { applyCors, isTrustedOrigin } from "./origin.js";
 import { attachRealtimeServer, registerRealtimeProvider } from "./realtime.js";
 import { appendMessage, listScopeChannels, updateMessage } from "./storage.js";
+import { ensureTables, getPool } from "./db.js";
 
 dotenv.config();
 const app = express();
@@ -24,7 +25,7 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, db: getPool() ? "connected" : "in-memory" });
 });
 
 app.get("/api/messages", async (req, res) => {
@@ -136,6 +137,7 @@ attachRealtimeServer(server, {
   allowOrigin: (origin) => isTrustedOrigin(origin, allowedOrigins)
 });
 
-server.listen(port, () => {
+server.listen(port, async () => {
+  await ensureTables();
   console.log(`Discord Activity backend listening on http://localhost:${port}`);
 });

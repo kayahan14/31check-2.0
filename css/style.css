@@ -2438,3 +2438,77 @@ svg { display: block; }
     transform: translateY(calc(-50% + 4px)) scaleX(-1);
   }
 }
+
+/* Custom Health Bar in Top Left */
+.mining-health-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 6px 12px;
+  border-radius: 999px;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  z-index: 20;
+}
+.mining-health-fill-bg {
+  width: 100px;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+.mining-health-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 4px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.mining-health-container span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  min-width: 32px;
+}
+
+/* Admin Mode Toggle Button */
+.admin-toggle-btn {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 6px 14px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  white-space: nowrap;
+  pointer-events: auto;
+  z-index: 50;
+}
+
+.admin-toggle-btn.btn-primary {
+  background: linear-gradient(135deg, #5865f2, #4752c4);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 15px rgba(88, 101, 242, 0.3);
+}
+
+.admin-toggle-btn.mining-exit-btn {
+  background: rgba(40, 42, 46, 0.7);
+  color: #b9bbbe;
+  backdrop-filter: blur(4px);
+}
+
+.admin-toggle-btn:hover {
+  transform: translateY(-1.5px) scale(1.02);
+  filter: brightness(1.15);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.admin-toggle-btn:active {
+  transform: translateY(0.5px) scale(0.98);
+}

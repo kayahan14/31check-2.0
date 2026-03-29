@@ -21,10 +21,12 @@ import {
   normalizeMiningSession,
   renderMiningTextState,
   createMiningSession,
-  joinMiningSession
+  joinMiningSession,
+  MINING_DEFAULT_CONFIG,
+  normalizeMiningConfig
 } from "../shared/mining-core.js";
 
-const OFFLINE_MODE = true; // Temporary mode to isolate physics from network
+const OFFLINE_MODE = false;
 
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "1481788345473302578";
 const GAME_BACKEND_URL = normalizeBackendOrigin(import.meta.env.VITE_GAME_BACKEND_URL || "");
@@ -98,10 +100,13 @@ const MINING_MIN_ZOOM = 0.1;
 const MINING_MAX_ZOOM = 1.8;
 const MINING_DEFAULT_ZOOM = 0.7;
 const MINING_BASE_VISIBLE_TILES = 15.5;
+const MINING_FOW_ENABLED = true;
 const LOCAL_MINES_MINE_COUNT_KEY = "31check:mines:mine-count";
 const LOCAL_CLEAR_CHAT_KEY = "31check:clear-chat";
 const LOCAL_DRAGON_AUTO_CASHOUT_KEY = "31check:dragon:auto-cashout";
 const LOCAL_MINING_ZOOM_KEY = "31check:mining:zoom";
+const LOCAL_MINING_CONFIG_KEY = "31check:mining:config";
+const LOCAL_MINING_ADMIN_MODE_KEY = "31check:mining:admin-mode";
 const DRAGON_CHANNEL_ID = "casino:dragon";
 
 const FALLBACK_MESSAGE = {
@@ -140,6 +145,9 @@ const state = {
   miningRealtimeReconnectHandle: null,
   miningServerClockLocalMs: 0,
   miningServerClockServerMs: 0,
+  miningConfig: normalizeMiningConfig(loadMiningConfigPreference()),
+  miningConfigDraft: normalizeMiningConfig(loadMiningConfigPreference()),
+  miningAdminMode: false,
   miningSession: null,
   miningProfile: null,
   miningStateLoading: true,
@@ -150,7 +158,20 @@ const state = {
   miningCanvasLastFrameAtMs: 0,
   miningCameraX: 0,
   miningCameraY: 0,
+  miningCameraManualX: 0,
+  miningCameraManualY: 0,
+  miningCameraFollowPlayer: true,
+  miningDragging: false,
+  miningDragStartX: 0,
+  miningDragStartY: 0,
+  miningDragStartCamX: 0,
+  miningDragStartCamY: 0,
+  miningDragMoved: false,
+  miningDragStartAtMs: 0,
   miningVisualPlayers: {},
+  miningDiscovery: new Set(),
+  miningDiscoverySessionId: null,
+  miningDiscoveryInitialized: false,
   miningZoom: loadMiningZoomPreference(),
   miningViewTab: "entrance",
   miningTargetTile: null,
@@ -180,8 +201,6 @@ const state = {
   interactiveActionLocks: {},
   pendingUpdatedMessages: {},
   pendingMessagesByChannel: buildEmptyMessageState(),
-  userModalView: "categories",
-  userGameConfigView: "dragon",
   currentUser: {
     id: MOCK_MODE ? MOCK_USER_ID : "",
     username: MOCK_MODE ? MOCK_USER_NAME : "discord",
@@ -196,18 +215,10 @@ const state = {
   channels: [...DEFAULT_CHANNELS],
   selectedChannelId: initialChannelId(),
   messagesByChannel: buildEmptyMessageState(),
-  members: MOCK_MODE ? [...DEFAULT_MEMBERS] : [],
-  activeAdminTab: "channels",
-  editingActionId: null,
-  tempAction: { label: "", message: "" }
+  members: MOCK_MODE ? [...DEFAULT_MEMBERS] : []
 };
 
 const app = document.getElementById("app");
-const adminBackdrop = document.getElementById("adminBackdrop");
-const userBackdrop = document.getElementById("userBackdrop");
-const channelList = document.getElementById("channelList");
-const channelCategory = document.getElementById("channelCategory");
-const categoryList = document.getElementById("categoryList");
 
 window.__31checkDebug = {
   getCurrentUser: () => cloneData(state.currentUser),
@@ -235,21 +246,14 @@ window.__31checkDebug = {
     return cloneData(window.__31checkDebug.getMiningClientState());
   }
 };
-const userModalTag = document.getElementById("userModalTag");
-const adminBadge = document.getElementById("adminBadge");
-const tabs = [...document.querySelectorAll(".tab")];
 let toastTimeoutHandle = 0;
-let userBackdropClickArmed = false;
 const interactivePersistQueues = {};
 
 bootstrap();
 
 async function bootstrap() {
-  decorateStaticUi();
   bindStaticEvents();
   render();
-  renderAdmin();
-  renderUserModal();
   await initializeRuntime();
 }
 
@@ -288,162 +292,10 @@ function restoreRenderFocus(snapshot) {
 }
 
 function decorateStaticUi() {
-  document.getElementById("addChannelButton").innerHTML = `${icon("plus", 16)}Ekle`;
-  document.getElementById("addCategoryButton").innerHTML = `${icon("plus", 16)}Ekle`;
-  document.getElementById("closeAdmin").innerHTML = icon("close", 24);
-  document.getElementById("closeUser").innerHTML = icon("close", 24);
-  syncUserTag();
+  // No static UI to decorate after admin panel removal
 }
 
 function bindStaticEvents() {
-  tabs.forEach((tab) => tab.addEventListener("click", () => {
-    state.activeAdminTab = tab.dataset.tab;
-    renderAdmin();
-  }));
-
-  document.getElementById("closeAdmin").addEventListener("click", closeAdminModal);
-  document.getElementById("adminCloseFooter").addEventListener("click", closeAdminModal);
-  document.getElementById("closeUser").addEventListener("click", closeUserModal);
-  document.getElementById("userCloseFooter").addEventListener("click", closeUserModal);
-  document.getElementById("userViewCategories").addEventListener("click", () => {
-    state.userModalView = "categories";
-    renderUserModal();
-  });
-  document.getElementById("userViewDragon").addEventListener("click", () => {
-    state.userModalView = "dragon";
-    state.userGameConfigView = "dragon";
-    state.dragonConfigDraft = normalizeDragonConfig(state.dragonConfig);
-    renderUserModal();
-  });
-  document.getElementById("userConfigDragon").addEventListener("click", () => {
-    state.userGameConfigView = "dragon";
-    renderUserModal();
-  });
-  document.getElementById("userConfigBlackjack").addEventListener("click", () => {
-    state.userGameConfigView = "blackjack";
-    renderUserModal();
-  });
-  document.getElementById("userConfigMines").addEventListener("click", () => {
-    state.userGameConfigView = "mines";
-    renderUserModal();
-  });
-  document.getElementById("dragonLobbyInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      lobbyMs: Number(event.currentTarget.value) * 1000
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonSpeedInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      speedFactor: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonLuckyChanceInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      luckyChancePercent: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonLuckyCrashInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      luckyCrashPerThousand: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonLowCapInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      lowCapMultiplier: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonLowChanceInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      lowCrashPerThousand: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonMidCapInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      midCapMultiplier: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonMidChanceInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      midCrashPerThousand: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonHighCapInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      highCapMultiplier: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonHighChanceInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      highCrashPerThousand: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonUltraChanceInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      ultraCrashPerThousand: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonTestCapInput").addEventListener("change", (event) => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      testMaxMultiplier: Number(event.currentTarget.value)
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonTestToggleButton").addEventListener("click", () => {
-    state.dragonConfigDraft = normalizeDragonConfig({
-      ...state.dragonConfigDraft,
-      testMode: !state.dragonConfigDraft.testMode
-    });
-    renderUserModal();
-  });
-  document.getElementById("dragonSaveButton").addEventListener("click", () => {
-    void saveDragonConfig();
-  });
-
-  adminBackdrop.addEventListener("click", (event) => {
-    if (event.target === adminBackdrop) closeAdminModal();
-  });
-  const userModalRoot = userBackdrop.querySelector(".modal");
-  if (userModalRoot) {
-    userModalRoot.addEventListener("pointerdown", () => {
-      userBackdropClickArmed = false;
-    });
-  }
-  userBackdrop.addEventListener("pointerdown", (event) => {
-    userBackdropClickArmed = event.target === userBackdrop;
-  });
-  userBackdrop.addEventListener("click", (event) => {
-    if (event.target === userBackdrop && userBackdropClickArmed) {
-      closeUserModal();
-    }
-    userBackdropClickArmed = false;
-  });
-
-  document.getElementById("channelForm").addEventListener("submit", addChannel);
-  document.getElementById("categoryForm").addEventListener("submit", addCategory);
-
   window.addEventListener("popstate", () => {
     state.selectedChannelId = initialChannelId();
     render();
@@ -503,7 +355,6 @@ async function initializeRuntime() {
       await initializeDedicatedCasinoViews();
     }
     render();
-    renderUserModal();
   } catch (error) {
     console.error("Discord SDK bootstrap failed, falling back to preview mode.", error);
     state.runtimeMode = "mock";
@@ -796,26 +647,26 @@ async function loadPersistedMessages({ initial = false } = {}) {
   const requestEpoch = state.remoteSyncEpoch;
 
   try {
-      const response = await fetch(buildMessagesApiUrl({
-        scopeKey: state.scopeKey,
-        ts: Date.now()
-      }), {
-        cache: "no-store"
-      });
-      if (!response.ok) return;
+    const response = await fetch(buildMessagesApiUrl({
+      scopeKey: state.scopeKey,
+      ts: Date.now()
+    }), {
+      cache: "no-store"
+    });
+    if (!response.ok) return;
 
-      const payload = await response.json();
-      if (requestEpoch !== state.remoteSyncEpoch) {
-        return;
-      }
-      syncRemoteMessages(payload.channels || {});
-    } catch (error) {
-      console.warn("Message sync failed.", error);
-    } finally {
-      if (state.isMessagesLoading) {
-        state.isMessagesLoading = false;
-        render();
-      }
+    const payload = await response.json();
+    if (requestEpoch !== state.remoteSyncEpoch) {
+      return;
+    }
+    syncRemoteMessages(payload.channels || {});
+  } catch (error) {
+    console.warn("Message sync failed.", error);
+  } finally {
+    if (state.isMessagesLoading) {
+      state.isMessagesLoading = false;
+      render();
+    }
   }
 }
 
@@ -940,13 +791,13 @@ function render() {
         ${renderChannelSections()}
       </div>
       <div class="sidebar-footer">
-        <button type="button" class="current-user ${state.currentUser.isAdmin ? "" : "is-locked"}" id="openUserButton" ${state.currentUser.isAdmin ? "" : "disabled"}>
+        <div class="current-user">
           ${renderAvatar(state.currentUser.avatarUrl, state.currentUser.displayName)}
           <span class="user-meta">
             <span class="user-name">${escapeHtml(state.currentUser.displayName)}</span>
             <span class="user-tag">${escapeHtml(state.currentUser.tag)}</span>
           </span>
-        </button>
+        </div>
       </div>
     </aside>
     <main class="main">
@@ -1138,10 +989,7 @@ function bindRuntimeUi() {
     state.categories = state.categories.map((item) => item.id === button.dataset.categoryId ? { ...item, collapsed: !item.collapsed } : item);
     render();
   }));
-  const userButton = document.getElementById("openUserButton");
-  if (userButton && state.currentUser.isAdmin) {
-    userButton.addEventListener("click", openUserModal);
-  }
+  // Admin panel removed — config is now in config/game-config.js
   app.querySelectorAll("[data-game-id]").forEach((button) => {
     button.addEventListener("click", async () => {
       const gameId = button.dataset.gameId;
@@ -1234,9 +1082,14 @@ function bindRuntimeUi() {
     miningCanvas.addEventListener("pointerdown", handleMiningCanvasClick);
     miningCanvas.addEventListener("pointermove", handleMiningCanvasHover);
     miningCanvas.addEventListener("wheel", handleMiningCanvasWheel, { passive: false });
+    miningCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    window.addEventListener("pointermove", handleMiningCanvasGlobalMove);
+    window.addEventListener("pointerup", handleMiningCanvasGlobalUp);
     startMiningCanvasLoop();
     renderMiningCanvas(miningCanvas);
   } else {
+    window.removeEventListener("pointermove", handleMiningCanvasGlobalMove);
+    window.removeEventListener("pointerup", handleMiningCanvasGlobalUp);
     stopMiningCanvasLoop();
   }
   const dragonAutoInput = document.getElementById("dragonAutoCashoutInput");
@@ -1355,168 +1208,18 @@ function bindRuntimeUi() {
   });
 }
 
-function renderAdmin() {
-  tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === state.activeAdminTab));
-  document.getElementById("channelsPanel").classList.add("active");
 
-  channelCategory.innerHTML = `<option value="">Kategori Seç (Opsiyonel)</option>${state.categories.map((category) => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join("")}`;
+// ── Admin panel removed ─────────────────────────────────────────────
+// Oyun ayarları artık config/game-config.js dosyasından yönetilir.
+// renderAdmin, renderUserModal, addChannel, addCategory fonksiyonları kaldırıldı.
+function renderAdmin() {}
+function renderUserModal() {}
+function openAdminModal() {}
+function closeAdminModal() {}
+function openUserModal() {}
+function closeUserModal() {}
+function syncUserTag() {}
 
-  channelList.innerHTML = state.channels.map((channel) => `
-      <div class="item">
-        <span class="item-name">${escapeHtml(channel.name)}</span>
-        <button type="button" class="icon-danger" data-delete-channel-id="${channel.id}" aria-label="Sil">${icon("trash", 16)}</button>
-      </div>`).join("");
-
-  bindAdmin();
-}
-
-function bindAdmin() {
-  channelList.querySelectorAll("[data-delete-channel-id]").forEach((button) => button.addEventListener("click", () => {
-    if (state.channels.length === 1) return;
-    const id = button.dataset.deleteChannelId;
-    state.channels = state.channels.filter((channel) => channel.id !== id);
-    delete state.messagesByChannel[id];
-    if (!state.channels.find((channel) => channel.id === state.selectedChannelId)) {
-      state.selectedChannelId = state.channels[0].id;
-      syncUrl(state.selectedChannelId, true);
-    }
-    render();
-    renderAdmin();
-  }));
-}
-
-function renderUserModal() {
-  adminBadge.hidden = !state.currentUser.isAdmin;
-  const categoriesTab = document.getElementById("userViewCategories");
-  const dragonTab = document.getElementById("userViewDragon");
-  const categoriesPanel = document.getElementById("userCategoriesPanel");
-  const dragonPanel = document.getElementById("userDragonPanel");
-  const dragonLobbyInput = document.getElementById("dragonLobbyInput");
-  const dragonSpeedInput = document.getElementById("dragonSpeedInput");
-  const dragonLuckyChanceInput = document.getElementById("dragonLuckyChanceInput");
-  const dragonLuckyCrashInput = document.getElementById("dragonLuckyCrashInput");
-  const dragonLowCapInput = document.getElementById("dragonLowCapInput");
-  const dragonLowChanceInput = document.getElementById("dragonLowChanceInput");
-  const dragonMidCapInput = document.getElementById("dragonMidCapInput");
-  const dragonMidChanceInput = document.getElementById("dragonMidChanceInput");
-  const dragonHighCapInput = document.getElementById("dragonHighCapInput");
-  const dragonHighChanceInput = document.getElementById("dragonHighChanceInput");
-  const dragonUltraChanceInput = document.getElementById("dragonUltraChanceInput");
-  const dragonTestCapInput = document.getElementById("dragonTestCapInput");
-  const dragonTestToggleButton = document.getElementById("dragonTestToggleButton");
-  const dragonConfigTab = document.getElementById("userConfigDragon");
-  const blackjackConfigTab = document.getElementById("userConfigBlackjack");
-  const minesConfigTab = document.getElementById("userConfigMines");
-  const dragonConfigPanel = document.getElementById("dragonConfigPanel");
-  const blackjackConfigPanel = document.getElementById("blackjackConfigPanel");
-  const minesConfigPanel = document.getElementById("minesConfigPanel");
-
-  const isDragonView = state.currentUser.isAdmin && state.userModalView === "dragon";
-  categoriesTab.classList.toggle("active", !isDragonView);
-  dragonTab.classList.toggle("active", isDragonView);
-  dragonTab.hidden = !state.currentUser.isAdmin;
-  categoriesPanel.hidden = isDragonView;
-  dragonPanel.hidden = !isDragonView;
-  dragonConfigTab?.classList.toggle("active", state.userGameConfigView === "dragon");
-  blackjackConfigTab?.classList.toggle("active", state.userGameConfigView === "blackjack");
-  minesConfigTab?.classList.toggle("active", state.userGameConfigView === "mines");
-  if (dragonConfigPanel) {
-    dragonConfigPanel.hidden = state.userGameConfigView !== "dragon";
-  }
-  if (blackjackConfigPanel) {
-    blackjackConfigPanel.hidden = state.userGameConfigView !== "blackjack";
-  }
-  if (minesConfigPanel) {
-    minesConfigPanel.hidden = state.userGameConfigView !== "mines";
-  }
-
-  categoryList.innerHTML = state.categories.length
-    ? state.categories.map((category) => `
-          <div class="item">
-            <span class="item-name">${escapeHtml(category.name)}</span>
-            <button type="button" class="icon-danger" data-delete-category-id="${category.id}" aria-label="Sil">${icon("trash", 16)}</button>
-          </div>`).join("")
-    : '<p class="item-subtext" style="text-align:center;padding:16px 0;">Henüz kategori eklenmemiş</p>';
-
-  categoryList.querySelectorAll("[data-delete-category-id]").forEach((button) => button.addEventListener("click", () => {
-    const id = button.dataset.deleteCategoryId;
-    state.categories = state.categories.filter((category) => category.id !== id);
-    state.channels = state.channels.map((channel) => channel.categoryId === id ? { ...channel, categoryId: "" } : channel);
-    render();
-    renderAdmin();
-    renderUserModal();
-  }));
-
-  if (dragonLobbyInput) {
-    dragonLobbyInput.value = String(Math.round(state.dragonConfigDraft.lobbyMs / 1000));
-  }
-  if (dragonSpeedInput) {
-    dragonSpeedInput.value = state.dragonConfigDraft.speedFactor.toFixed(2);
-  }
-  if (dragonLuckyChanceInput) {
-    dragonLuckyChanceInput.value = String(state.dragonConfigDraft.luckyChancePercent);
-  }
-  if (dragonLuckyCrashInput) {
-    dragonLuckyCrashInput.value = String(state.dragonConfigDraft.luckyCrashPerThousand);
-  }
-  if (dragonLowCapInput) {
-    dragonLowCapInput.value = state.dragonConfigDraft.lowCapMultiplier.toFixed(2);
-  }
-  if (dragonLowChanceInput) {
-    dragonLowChanceInput.value = String(state.dragonConfigDraft.lowCrashPerThousand);
-  }
-  if (dragonMidCapInput) {
-    dragonMidCapInput.value = state.dragonConfigDraft.midCapMultiplier.toFixed(2);
-  }
-  if (dragonMidChanceInput) {
-    dragonMidChanceInput.value = String(state.dragonConfigDraft.midCrashPerThousand);
-  }
-  if (dragonHighCapInput) {
-    dragonHighCapInput.value = state.dragonConfigDraft.highCapMultiplier.toFixed(2);
-  }
-  if (dragonHighChanceInput) {
-    dragonHighChanceInput.value = String(state.dragonConfigDraft.highCrashPerThousand);
-  }
-  if (dragonUltraChanceInput) {
-    dragonUltraChanceInput.value = String(state.dragonConfigDraft.ultraCrashPerThousand);
-  }
-  if (dragonTestCapInput) {
-    dragonTestCapInput.value = state.dragonConfigDraft.testMaxMultiplier.toFixed(2);
-  }
-  if (dragonTestToggleButton) {
-    dragonTestToggleButton.textContent = state.dragonConfigDraft.testMode ? "Test Acik" : "Test Kapali";
-    dragonTestToggleButton.classList.toggle("btn-primary", state.dragonConfigDraft.testMode);
-    dragonTestToggleButton.classList.toggle("btn-secondary", !state.dragonConfigDraft.testMode);
-  }
-}
-
-function addChannel(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const name = String(form.get("channelName") || "").trim();
-  const categoryId = String(form.get("channelCategory") || "");
-  if (!name) return;
-
-  const nextId = String(Math.max(0, ...state.channels.map((channel) => Number(channel.id) || 0)) + 1);
-  state.channels.push({ id: nextId, name, categoryId });
-  state.messagesByChannel[nextId] ||= [];
-  event.currentTarget.reset();
-  render();
-  renderAdmin();
-}
-
-function addCategory(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const name = String(form.get("categoryName") || "").trim();
-  if (!name) return;
-
-  state.categories.push({ id: uid(), name, collapsed: false });
-  event.currentTarget.reset();
-  render();
-  renderAdmin();
-  renderUserModal();
-}
 
 async function submitMessage(content) {
   const message = makeMessage({ type: "text", content });
@@ -1554,24 +1257,24 @@ async function sendGameMessage(game, label) {
     return;
   }
 
-    if (game === "dragon") {
-      const activeDragonMessage = findVisibleActiveDragonMessage();
-      if (activeDragonMessage) {
-        const activeDragon = normalizeDragonState(activeDragonMessage.content);
-        const alreadyJoined = Boolean(getDragonParticipant(activeDragon, state.currentUser.id));
-        openDragonModal(activeDragonMessage.id);
-        showToast(alreadyJoined ? "Aktif ejderha acildi." : "Aktif ejderhaya katil.");
-        return;
-      }
-      const message = makeMessage({
-        type: "dragon",
-        content: createDragonGameState()
-      });
-      appendLocalMessage(message);
-      state.dragonModalMessageId = message.id;
-      await persistMessage(message);
+  if (game === "dragon") {
+    const activeDragonMessage = findVisibleActiveDragonMessage();
+    if (activeDragonMessage) {
+      const activeDragon = normalizeDragonState(activeDragonMessage.content);
+      const alreadyJoined = Boolean(getDragonParticipant(activeDragon, state.currentUser.id));
+      openDragonModal(activeDragonMessage.id);
+      showToast(alreadyJoined ? "Aktif ejderha acildi." : "Aktif ejderhaya katil.");
       return;
     }
+    const message = makeMessage({
+      type: "dragon",
+      content: createDragonGameState()
+    });
+    appendLocalMessage(message);
+    state.dragonModalMessageId = message.id;
+    await persistMessage(message);
+    return;
+  }
 
   const message = makeMessage({ type: "game", content: buildGameMessage(game, label) });
   appendLocalMessage(message);
@@ -1649,12 +1352,12 @@ async function persistMessage(message) {
   const channel = selectedChannel();
   if (!channel) return;
 
-    try {
-      const response = await fetch(buildMessagesApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scopeKey: state.scopeKey, channelId: channel.id, message })
-      });
+  try {
+    const response = await fetch(buildMessagesApiUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scopeKey: state.scopeKey, channelId: channel.id, message })
+    });
     if (!response.ok) {
       throw new Error("Message persistence request failed.");
     }
@@ -1666,13 +1369,13 @@ async function persistMessage(message) {
   }
 }
 
-  async function persistMessageUpdate(message) {
-    try {
-      const response = await fetch(buildMessagesApiUrl(), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scopeKey: state.scopeKey,
+async function persistMessageUpdate(message) {
+  try {
+    const response = await fetch(buildMessagesApiUrl(), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scopeKey: state.scopeKey,
         messageId: message.id,
         message
       })
@@ -1763,7 +1466,7 @@ function isCasinoMiningView(id = state.selectedChannelId) {
 function initialChannelId() {
   const fromHash = window.location.hash.match(/channel\/([^/?#]+)/);
   const fromPath = window.location.pathname.match(/channel\/([^/?#]+)/);
-  return fromHash?.[1] || fromPath?.[1] || "1";
+  return fromHash?.[1] || fromPath?.[1] || MINING_CHANNEL_ID;
 }
 
 function syncUrl(id, replace = false) {
@@ -1775,28 +1478,6 @@ function syncUrl(id, replace = false) {
 
 function channelHref(id) {
   return window.location.protocol === "file:" ? `#channel/${id}` : `/channel/${id}`;
-}
-
-function openAdminModal() {
-  if (!state.currentUser.isAdmin) return;
-  adminBackdrop.classList.add("open");
-  adminBackdrop.setAttribute("aria-hidden", "false");
-}
-
-function closeAdminModal() {
-  adminBackdrop.classList.remove("open");
-  adminBackdrop.setAttribute("aria-hidden", "true");
-}
-
-function openUserModal() {
-  if (!state.currentUser.isAdmin) return;
-  userBackdrop.classList.add("open");
-  userBackdrop.setAttribute("aria-hidden", "false");
-}
-
-function closeUserModal() {
-  userBackdrop.classList.remove("open");
-  userBackdrop.setAttribute("aria-hidden", "true");
 }
 
 function buildScopeKey() {
@@ -1830,10 +1511,6 @@ function getBlackjackRevision(message) {
   const game = normalizeBlackjackState(message.content);
   const revision = Number(game?.revision);
   return Number.isFinite(revision) && revision > 0 ? revision : 1;
-}
-
-function syncUserTag() {
-  userModalTag.textContent = `${state.currentUser.displayName} (${state.currentUser.tag})`;
 }
 
 function computeIsAdmin(user) {
@@ -2459,12 +2136,12 @@ async function handleDragonJoin(messageId) {
   }
 }
 
-  async function performDragonAction(messageId, actionType) {
+async function performDragonAction(messageId, actionType) {
   const response = await fetch(buildMessagesApiUrl(), {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scopeKey: state.scopeKey,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      scopeKey: state.scopeKey,
       messageId,
       actionType,
       actor: {
@@ -2630,30 +2307,30 @@ function hasDirectRealtimeBackend() {
   return (hostname === "localhost" || hostname === "127.0.0.1") && port === "5173";
 }
 
-  function buildGameApiUrl(path, query = {}) {
+function buildGameApiUrl(path, query = {}) {
   return buildFrontendApiUrl(path, query);
-  }
+}
 
-  function buildMessagesApiUrl(query = {}) {
-    return buildFrontendApiUrl("/api/messages", query);
-  }
+function buildMessagesApiUrl(query = {}) {
+  return buildFrontendApiUrl("/api/messages", query);
+}
 
-  function buildFrontendApiUrl(path, query = {}) {
-    const normalizedPath = String(path || "").startsWith("/") ? String(path) : `/${String(path || "")}`;
-    const relativePath = isDiscordProxyHost() ? `/.proxy${normalizedPath}` : normalizedPath;
-    const url = new URL(relativePath, `${getFrontendApiOrigin()}/`);
-    for (const [key, value] of Object.entries(query || {})) {
-      if (value === undefined || value === null || value === "") continue;
-      url.searchParams.set(key, String(value));
-    }
-    if (isDiscordProxyHost() || (!FRONTEND_API_ORIGIN && window.location.origin === getFrontendApiOrigin())) {
-      return `${url.pathname}${url.search}`;
-    }
-    return url.toString();
+function buildFrontendApiUrl(path, query = {}) {
+  const normalizedPath = String(path || "").startsWith("/") ? String(path) : `/${String(path || "")}`;
+  const relativePath = isDiscordProxyHost() ? `/.proxy${normalizedPath}` : normalizedPath;
+  const url = new URL(relativePath, `${getFrontendApiOrigin()}/`);
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
   }
+  if (isDiscordProxyHost() || (!FRONTEND_API_ORIGIN && window.location.origin === getFrontendApiOrigin())) {
+    return `${url.pathname}${url.search}`;
+  }
+  return url.toString();
+}
 
-  function buildBackendApiUrl(path, query = {}) {
-    const url = new URL(path, `${getGameBackendOrigin()}/`);
+function buildBackendApiUrl(path, query = {}) {
+  const url = new URL(path, `${getGameBackendOrigin()}/`);
   for (const [key, value] of Object.entries(query || {})) {
     if (value === undefined || value === null || value === "") continue;
     url.searchParams.set(key, String(value));
@@ -2808,7 +2485,7 @@ async function initializeMiningTransport() {
   startMiningSessionSync();
   startMiningUiTicker();
   window.advanceTime = (ms) => new Promise((resolve) => window.setTimeout(resolve, Number(ms || 0)));
-  
+
   if (OFFLINE_MODE) {
     state.miningRealtimeReady = true;
     return;
@@ -2850,7 +2527,10 @@ async function initializeMiningTransport() {
           const actionName = message.action;
           const data = message.data || {};
           if (actionName === "mine") {
-            mineMiningTile(session, message.actorId, Math.round(Number(data.x)), Math.round(Number(data.y)), Date.now());
+            const res = mineMiningTile(session, message.actorId, Math.round(Number(data.x)), Math.round(Number(data.y)), Date.now());
+            if (res.changed && res.tileBroken) {
+              updateMiningDiscovery(Math.round(Number(data.x)), Math.round(Number(data.y)), session.config?.mineRevealRadius || 1);
+            }
           } else if (actionName === "attack") {
             attackMiningMole(session, message.actorId, data.targetId, Date.now());
           } else if (actionName === "extract") {
@@ -2879,7 +2559,7 @@ async function loadMiningState({ initial = false } = {}) {
   if (OFFLINE_MODE) {
     if (initial) {
       if (!state.miningSession) {
-        state.miningSession = { id: "local-session", content: normalizeMiningSession(createMiningSession(state.currentUser, state.miningProfile)) };
+        state.miningSession = { id: "local-session", content: normalizeMiningSession(createMiningSession(state.currentUser, state.miningProfile, state.miningConfig)) };
         syncMiningVisualState(state.miningSession.content);
       }
       state.miningStateLoading = false;
@@ -2962,6 +2642,21 @@ function applyMiningTransportPayload(payload, options = {}) {
     name: state.currentUser.displayName
   });
   state.miningSession = nextSession;
+  if (nextSession?.content?.config) {
+    state.miningConfig = normalizeMiningConfig(nextSession.content.config);
+  }
+  if (MINING_FOW_ENABLED && nextSession) {
+    if (nextSession.id !== state.miningDiscoverySessionId) {
+      state.miningDiscovery = new Set();
+      state.miningDiscoverySessionId = nextSession.id;
+      state.miningDiscoveryInitialized = false;
+    }
+    if (!state.miningDiscoveryInitialized && nextSession.content?.map?.size > 0) {
+      const center = Math.floor(nextSession.content.map.size / 2);
+      updateMiningDiscovery(center, center, state.miningConfig.spawnRevealRadius || 8);
+      state.miningDiscoveryInitialized = true;
+    }
+  }
   state.miningProfile = nextProfile;
   syncMiningVisualState(nextSession?.content || null);
   const phase = state.miningSession?.content ? getMiningPhase(state.miningSession.content) : "idle";
@@ -3024,19 +2719,7 @@ function syncMiningVisualState(session, now = getMiningNow()) {
   }
 
   state.miningVisualPlayers = nextVisuals;
-  const localVisual = nextVisuals[state.currentUser.id] || null;
-  if (!localVisual) return;
-
-  const deadzone = 1.0; 
-  const dx = localVisual.x - state.miningCameraX;
-  const dy = localVisual.y - state.miningCameraY;
-  
-  if (Math.abs(dx) > deadzone) {
-    state.miningCameraX += dx - Math.sign(dx) * deadzone;
-  }
-  if (Math.abs(dy) > deadzone) {
-    state.miningCameraY += dy - Math.sign(dy) * deadzone;
-  }
+  // Camera smooth logic was moved to tickMiningCanvasFrame for 60fps tracking.
 }
 
 function startMiningCanvasLoop() {
@@ -3058,8 +2741,19 @@ function requestMiningCanvasFrame() {
   startMiningCanvasLoop();
 }
 
+function updateMiningDiscovery(centerX, centerY, radius) {
+  if (!MINING_FOW_ENABLED || !state.miningDiscovery) return;
+  const r = Math.floor(radius);
+  const cx = Math.floor(centerX);
+  const cy = Math.floor(centerY);
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      state.miningDiscovery.add(`${x},${y}`);
+    }
+  }
+}
+
 function tickMiningCanvasFrame(frameAtMs) {
-  state.miningCanvasRaf = 0;
   if (!isCasinoMiningView()) {
     stopMiningCanvasLoop();
     return;
@@ -3072,20 +2766,23 @@ function tickMiningCanvasFrame(frameAtMs) {
 
   const deltaMs = state.miningCanvasLastFrameAtMs ? Math.min(34, Math.max(8, frameAtMs - state.miningCanvasLastFrameAtMs)) : 16;
   state.miningCanvasLastFrameAtMs = frameAtMs;
-  
+
   const session = state.miningSession?.content;
   if (session && getMiningPhase(session) === "active") {
     advanceMiningSession(session, getMiningNow());
-    
+
     const localPlayer = getMiningCurrentPlayer(session, state.currentUser.id);
     const localVisual = state.miningVisualPlayers?.[state.currentUser.id];
     if (localPlayer && localVisual) {
-      localVisual.x = localPlayer.x;
-      localVisual.y = localPlayer.y;
+      // Smoothly interpolate the visual position instead of snapping
+      const ease = 1 - Math.exp(-deltaMs / 40);
+      localVisual.x += (localPlayer.x - localVisual.x) * ease;
+      localVisual.y += (localPlayer.y - localVisual.y) * ease;
+
       localVisual.targetX = localPlayer.targetX;
       localVisual.targetY = localPlayer.targetY;
       localVisual.facing = localPlayer.facing;
-      
+
       localVisual.lastAction = localPlayer.lastAction;
       if (localPlayer.lastActionAtMs > (localVisual.lastActionAtMs || 0)) {
         localVisual.lastActionAtMs = localPlayer.lastActionAtMs;
@@ -3094,6 +2791,23 @@ function tickMiningCanvasFrame(frameAtMs) {
   }
 
   advanceMiningVisualState(deltaMs);
+
+  // Smooth 60fps+ camera follow
+  const currentVisual = state.miningVisualPlayers?.[state.currentUser.id];
+  if (currentVisual) {
+    const deadzone = 1.0;
+    const dx = currentVisual.x - state.miningCameraX;
+    const dy = currentVisual.y - state.miningCameraY;
+    const cameraEase = 1 - Math.exp(-deltaMs / 120); // Smooth glide
+
+    if (Math.abs(dx) > deadzone) {
+      state.miningCameraX += (dx - Math.sign(dx) * deadzone) * cameraEase;
+    }
+    if (Math.abs(dy) > deadzone) {
+      state.miningCameraY += (dy - Math.sign(dy) * deadzone) * cameraEase;
+    }
+  }
+
   renderMiningCanvas(canvas);
   state.miningCanvasRaf = window.requestAnimationFrame(tickMiningCanvasFrame);
 }
@@ -3207,6 +2921,15 @@ async function handleMiningUiAction(action) {
     render();
     return;
   }
+  if (action === "toggle-admin-mode") {
+    state.miningAdminMode = !state.miningAdminMode;
+    saveMiningAdminModePreference(state.miningAdminMode);
+    const session = state.miningSession?.content;
+    const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+    if (player) player.isAdminMode = state.miningAdminMode;
+    render();
+    return;
+  }
   if (action === "start_lobby" || action === "join_lobby" || action === "extract") {
     await performMiningAction(action);
   }
@@ -3226,7 +2949,17 @@ async function performMiningAction(action, meta = {}, options = {}) {
   if (action === "start_lobby" || action === "join_lobby") {
     if (OFFLINE_MODE) {
       if (action === "start_lobby") {
-        state.miningSession = { id: "local-session", content: normalizeMiningSession(createMiningSession(state.currentUser, state.miningProfile)) };
+        const session = { id: "local-session", content: normalizeMiningSession(createMiningSession(state.currentUser, state.miningProfile, state.miningConfig)) };
+        state.miningSession = session;
+        if (MINING_FOW_ENABLED) {
+          state.miningDiscovery = new Set();
+          state.miningDiscoverySessionId = session.id;
+          const mapSize = session.content.map?.size || 0;
+          if (mapSize > 0) {
+            const center = Math.floor(mapSize / 2);
+            updateMiningDiscovery(center, center, session.content.config?.spawnRevealRadius || 5);
+          }
+        }
       } else if (action === "join_lobby" && state.miningSession?.content) {
         joinMiningSession(state.miningSession.content, state.currentUser, state.miningProfile?.loadout, Date.now());
       }
@@ -3247,6 +2980,7 @@ async function performMiningAction(action, meta = {}, options = {}) {
             id: state.currentUser.id,
             name: state.currentUser.displayName
           },
+          config: state.miningConfig,
           ...meta
         })
       });
@@ -3276,6 +3010,11 @@ async function performMiningAction(action, meta = {}, options = {}) {
   let changed = false;
   let errorCode = "";
 
+  if (session) {
+    const player = getMiningCurrentPlayer(session, playerId);
+    if (player) player.isAdminMode = !!state.miningAdminMode;
+  }
+
   advanceMiningSession(session, now);
 
   if (action === "move") {
@@ -3300,6 +3039,9 @@ async function performMiningAction(action, meta = {}, options = {}) {
     changed = result.changed;
     errorCode = result.reason || "";
     if (changed) {
+      if (result.tileBroken) {
+        updateMiningDiscovery(Math.round(Number(meta.x ?? 0)), Math.round(Number(meta.y ?? 0)), session.config?.mineRevealRadius || 1);
+      }
       sendMiningWs("mining_action", { action: "mine", data: { x: meta.x, y: meta.y } });
     }
   } else if (action === "attack") {
@@ -3386,7 +3128,6 @@ function renderMiningStageHudPills(session, activePlayer, now = getMiningNow()) 
   const hardMsLeft = session?.hardCollapseAtMs ? Math.max(0, session.hardCollapseAtMs - now) : MINING_TARGET_RUN_MS;
   return `
     <span class="mining-pill">Toplanan ${escapeHtml(formatCoinValue(activePlayer?.runCoins || 0))}</span>
-    <span class="mining-pill">Butunluk ${escapeHtml(`${Math.round(Number(activePlayer?.integrity ?? 100))}%`)}</span>
     <span class="mining-pill">Katilim ${escapeHtml(String(joinedCount))}</span>
     <span class="mining-pill">Cikis ${escapeHtml(String((session?.discoveredExitIds || []).length))}/2</span>
     <span class="mining-pill">Hedef ${escapeHtml(formatDurationLabel(hardMsLeft))}</span>
@@ -3429,6 +3170,24 @@ function updateMiningActiveStageDom({ repaintCanvas = false } = {}) {
   }
 
   const activePlayer = player && player.status === "active" ? player : null;
+
+  const healthContainer = document.getElementById("miningHealthBarContainer");
+  const healthFill = document.getElementById("miningHealthBarFill");
+  const healthText = document.getElementById("miningHealthBarText");
+  if (healthContainer) {
+    if (activePlayer) {
+      healthContainer.style.display = "flex";
+      const hp = Math.max(0, Math.round(Number(activePlayer.integrity ?? 100)));
+      if (healthFill) {
+        healthFill.style.width = `${hp}%`;
+        healthFill.style.background = hp <= 30 ? "#f04747" : (hp <= 60 ? "#faa61a" : "#43b581");
+      }
+      if (healthText) healthText.textContent = `${hp}%`;
+    } else {
+      healthContainer.style.display = "none";
+    }
+  }
+
   subtitle.textContent = activePlayer
     ? "Tikladigin hedefe akici sekilde ilerle. Damara vurunca kendin kazmaya devam edersin."
     : "Aktif magara acik. Istedigin an iceri dalabilirsin.";
@@ -3474,7 +3233,7 @@ function renderMiningRealtimeView() {
   if (!session || isFinished || !showMap) {
     const isLoss = phase === "collapsed";
     const isWin = phase === "finished";
-    
+
     return `
       <section class="mining-screen">
         <div class="mining-shell">
@@ -3522,12 +3281,19 @@ function renderMiningRealtimeView() {
           <div class="mining-stage-card mining-stage-card-full">
             <div class="mining-stage-overlay mining-stage-overlay-left">
               <div class="mining-stage-brand">Mining</div>
+              <div id="miningHealthBarContainer" class="mining-health-container" style="${activePlayer ? 'display:flex;' : 'display:none;'}">
+                <div class="mining-health-fill-bg">
+                  <div id="miningHealthBarFill" class="mining-health-fill" style="width: ${activePlayer?.integrity ?? 100}%; background: ${activePlayer?.integrity <= 30 ? '#f04747' : ((activePlayer?.integrity ?? 100) <= 60 ? '#faa61a' : '#43b581')};"></div>
+                </div>
+                <span id="miningHealthBarText">${Math.round(activePlayer?.integrity ?? 100)}%</span>
+              </div>
               <div id="miningStageSubtitle" class="mining-stage-subtitle">${escapeHtml(activePlayer ? "Tikladigin hedefe akici sekilde ilerle. Damara vurunca kendin kazmaya devam edersin." : "Aktif magara acik. Istedigin an iceri dalabilirsin.")}</div>
               <div id="miningRoster" class="mining-roster compact">${renderMiningRoster(session.players || [])}</div>
             </div>
             <div class="mining-stage-overlay mining-stage-overlay-right">
               <div id="miningStageHud" class="mining-stage-hud">${renderMiningStageHudPills(session, activePlayer)}</div>
               <div id="miningJoinActionHost">${joinAction}</div>
+              <button type="button" class="btn ${state.miningAdminMode ? 'btn-primary' : 'mining-exit-btn'} admin-toggle-btn" data-mining-action="toggle-admin-mode" title="Admin Modunu Acar/Kapatir">${state.miningAdminMode ? 'Admin: ON' : 'Admin: OFF'}</button>
               <button type="button" class="btn mining-exit-btn" data-mining-action="leave_session">Cikis</button>
             </div>
             <canvas id="miningCanvas" class="mining-canvas" width="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}" height="${MINING_TILE_SIZE * ((MINING_VIEW_RADIUS * 2) + 1)}"></canvas>
@@ -3622,6 +3388,13 @@ function renderMiningCanvas(canvas) {
   }
 
   const now = getMiningNow();
+
+  // Kamera takibi: Takip aktifse Manuel pozisyonu oyuncuyla senkronize et
+  if (state.miningCameraFollowPlayer && player) {
+    state.miningCameraManualX = player.x;
+    state.miningCameraManualY = player.y;
+  }
+
   const metrics = getMiningCanvasMetrics(canvas, session, player);
 
   drawMiningBackdrop(context, metrics, now);
@@ -3631,13 +3404,39 @@ function renderMiningCanvas(canvas) {
   const endX = Math.ceil(metrics.worldStartX + metrics.visibleWidthTiles) + 1;
   const endY = Math.ceil(metrics.worldStartY + metrics.visibleHeightTiles) + 1;
 
+  // Draw exit light glows underneath tiles
+  for (let ty = startY; ty <= endY; ty++) {
+    for (let tx = startX; tx <= endX; tx++) {
+      const tile = getMiningTile(map, tx, ty);
+      if (tile && (tile.kind === "exit" || tile.hiddenExitId)) {
+        const rect = getMiningTileScreenRect(metrics, tx, ty);
+        if (rect) {
+          context.save();
+          // Increase radius from 2.5 to 5.0 for 10x10 area
+          const radius = rect.size * 5.0;
+          const gradient = context.createRadialGradient(
+            rect.centerX, rect.centerY, 0,
+            rect.centerX, rect.centerY, radius
+          );
+          gradient.addColorStop(0, "rgba(255, 255, 255, 0.45)");
+          gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+          context.fillStyle = gradient;
+          context.beginPath();
+          context.arc(rect.centerX, rect.centerY, radius, 0, Math.PI * 2);
+          context.fill();
+          context.restore();
+        }
+      }
+    }
+  }
+
   for (let tileY = startY; tileY <= endY; tileY += 1) {
     for (let tileX = startX; tileX <= endX; tileX += 1) {
       const tile = getMiningTile(map, tileX, tileY);
       if (!tile) continue;
       if (tile.kind === "wall" && tile.oreId) {
         drawMiningWallTile(context, metrics, tileX, tileY, tile, now);
-      } else if (tile.kind === "exit") {
+      } else if (tile.kind === "exit" || (state.miningAdminMode && tile.hiddenExitId)) {
         drawMiningExitTile(context, metrics, tileX, tileY, now);
       }
     }
@@ -3654,6 +3453,26 @@ function renderMiningCanvas(canvas) {
   }
 
   drawMiningQueuedPath(context, metrics);
+
+  if (!state.miningAdminMode && MINING_FOW_ENABLED && state.miningDiscovery) {
+    if (player) {
+      updateMiningDiscovery(Math.floor(player.x), Math.floor(player.y), state.miningConfig?.moveRevealRadius || 1);
+    }
+    context.save();
+    const tilePx = metrics.tilePx;
+    context.fillStyle = "#17131a"; // Solid block color
+
+    for (let ty = startY; ty <= endY; ty++) {
+      for (let tx = startX; tx <= endX; tx++) {
+        if (!state.miningDiscovery.has(`${tx},${ty}`)) {
+          const sx = (tx - metrics.worldStartX) * tilePx;
+          const sy = (ty - metrics.worldStartY) * tilePx;
+          context.fillRect(sx - 0.5, sy - 0.5, tilePx + 1, tilePx + 1);
+        }
+      }
+    }
+    context.restore();
+  }
 }
 
 function handleMiningCanvasClick(event) {
@@ -3664,11 +3483,29 @@ function handleMiningCanvasClick(event) {
   const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
   if (!session || !player || player.status !== "active" || !session.map) return;
 
+  const isRightClick = event.button === 2;
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / Math.max(1, rect.width);
   const scaleY = canvas.height / Math.max(1, rect.height);
   const localX = (event.clientX - rect.left) * scaleX;
   const localY = (event.clientY - rect.top) * scaleY;
+
+  if (isRightClick) {
+    state.miningDragging = true;
+    state.miningDragMoved = false;
+    state.miningDragStartX = event.clientX;
+    state.miningDragStartY = event.clientY;
+    state.miningDragStartAtMs = getMiningNow();
+
+    // Su anki manuel kamerayi baslangic olarak al
+    state.miningDragStartCamX = state.miningCameraManualX;
+    state.miningDragStartCamY = state.miningCameraManualY;
+
+    // Sag tiklandigi anda takibi durdur
+    state.miningCameraFollowPlayer = false;
+    return;
+  }
+
   const metrics = getMiningCanvasMetrics(canvas, session, player);
   const worldX = metrics.worldStartX + (localX / metrics.tilePx);
   const clickWorldY = metrics.worldStartY + (localY / metrics.tilePx);
@@ -3677,6 +3514,10 @@ function handleMiningCanvasClick(event) {
 
   const targetX = worldX;
   const targetY = clickWorldY - 0.24; // karakterin merkezini degil ayaklarini hizala
+
+  const dx = player.x - (tileX + 0.5);
+  const dy = (player.y + 0.24) - (tileY + 0.5);
+  const distToTile = Math.sqrt(dx * dx + dy * dy);
 
   state.miningClickRipple = { x: worldX, y: clickWorldY, startMs: getMiningNow() };
 
@@ -3697,6 +3538,42 @@ function handleMiningCanvasClick(event) {
   } else {
     state.miningAutoAction = null;
     void performMiningAction("move", { targetX, targetY }, { silent: true });
+  }
+}
+
+function handleMiningCanvasGlobalMove(event) {
+  if (!state.miningDragging) return;
+  const dx = event.clientX - state.miningDragStartX;
+  const dy = event.clientY - state.miningDragStartY;
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+    state.miningDragMoved = true;
+  }
+
+  const canvas = document.getElementById("miningCanvas");
+  if (!(canvas instanceof HTMLCanvasElement)) return;
+  const session = state.miningSession?.content ? normalizeMiningSession(state.miningSession.content) : null;
+  const player = session ? getMiningCurrentPlayer(session, state.currentUser.id) : null;
+  if (!session) return;
+
+  const metrics = getMiningCanvasMetrics(canvas, session, player);
+  const worldDx = dx / metrics.tilePx;
+  const worldDy = dy / metrics.tilePx;
+
+  state.miningCameraManualX = state.miningDragStartCamX - worldDx;
+  state.miningCameraManualY = state.miningDragStartCamY - worldDy;
+  state.miningCameraFollowPlayer = false;
+  requestMiningCanvasFrame();
+}
+
+function handleMiningCanvasGlobalUp(event) {
+  if (!state.miningDragging) return;
+  const elapsed = getMiningNow() - state.miningDragStartAtMs;
+  state.miningDragging = false;
+
+  // Eger cok kisa sureli basildiysa VE hic kaydirilmadiysa (tiklama): Takibi ac
+  if (elapsed < 300 && !state.miningDragMoved) {
+    state.miningCameraFollowPlayer = true;
+    requestMiningCanvasFrame();
   }
 }
 
@@ -3879,15 +3756,21 @@ function getMiningCanvasMetrics(canvas, session, player) {
   const tilePx = shortestEdge / visibleShortEdgeTiles;
   const visibleWidthTiles = canvas.width / tilePx;
   const visibleHeightTiles = canvas.height / tilePx;
-  const fallbackX = player ? player.x : Math.floor(Number(map?.size || 0) / 2);
-  const fallbackY = player ? player.y : Math.floor(Number(map?.size || 0) / 2);
-  const rawCameraX = Number.isFinite(state.miningCameraX) ? state.miningCameraX : fallbackX;
-  const rawCameraY = Number.isFinite(state.miningCameraY) ? state.miningCameraY : fallbackY;
+
+  const camX = state.miningCameraFollowPlayer ? (player ? player.x : Math.floor(Number(map?.size || 0) / 2)) : state.miningCameraManualX;
+  const camY = state.miningCameraFollowPlayer ? (player ? player.y : Math.floor(Number(map?.size || 0) / 2)) : state.miningCameraManualY;
+
+  const rawCameraX = Number.isFinite(camX) ? camX : (player ? player.x : Math.floor(Number(map?.size || 0) / 2));
+  const rawCameraY = Number.isFinite(camY) ? camY : (player ? player.y : Math.floor(Number(map?.size || 0) / 2));
+
   const bounds = getMiningCameraBounds(map, visibleWidthTiles, visibleHeightTiles);
   const cameraX = clamp(rawCameraX, bounds.minX, bounds.maxX);
   const cameraY = clamp(rawCameraY, bounds.minY, bounds.maxY);
+
+  // Vizuel cikti icin gecici state
   state.miningCameraX = cameraX;
   state.miningCameraY = cameraY;
+
   return {
     canvas,
     map,
@@ -3908,18 +3791,15 @@ function getMiningCameraBounds(map, visibleWidthTiles, visibleHeightTiles) {
   const originX = Number(map?.originX || 0);
   const originY = Number(map?.originY || 0);
   const windowSize = Math.max(1, Number(map?.windowSize || map?.size || 1));
-  const halfWidth = visibleWidthTiles / 2;
-  const halfHeight = visibleHeightTiles / 2;
-  const minX = originX + halfWidth;
-  const maxX = originX + windowSize - halfWidth;
-  const minY = originY + halfHeight;
-  const maxY = originY + windowSize - halfHeight;
-  return {
-    minX: minX > maxX ? originX + (windowSize / 2) : minX,
-    maxX: minX > maxX ? originX + (windowSize / 2) : maxX,
-    minY: minY > maxY ? originY + (windowSize / 2) : minY,
-    maxY: minY > maxY ? originY + (windowSize / 2) : maxY
-  };
+
+  // Allow camera center to move significantly outside the map for "empty space" padding
+  const padding = 15;
+  const minX = originX - padding;
+  const maxX = originX + windowSize + padding;
+  const minY = originY - padding;
+  const maxY = originY + windowSize + padding;
+
+  return { minX, maxX, minY, maxY };
 }
 
 function getMiningTileScreenRect(metrics, tileX, tileY) {
@@ -4083,7 +3963,10 @@ function drawMiningEffects(context, metrics, effects, now) {
     const rect = getMiningTileScreenRect(metrics, effect.x, effect.y);
     if (!rect) continue;
     context.save();
-    context.translate(rect.centerX, rect.centerY);
+
+    // Smooth positions (characters) translate to x,y while locked grid effects center on tile
+    const isGridLocked = effect.type === "mine-hit" || effect.type === "mine-break" || effect.type === "mole-break";
+    context.translate(isGridLocked ? rect.centerX : rect.x, isGridLocked ? rect.centerY : rect.y);
 
     if (effect.type === "mine-hit") {
       const radius = rect.size * (0.22 + (progress * 0.34));
@@ -4095,25 +3978,29 @@ function drawMiningEffects(context, metrics, effects, now) {
     }
 
     if (effect.type === "mine-break" || effect.type === "mole-break") {
+      // Ease-out cubic curve so explosion bursts fast then slows smoothly
+      const easeOut = 1 - Math.pow(1 - progress, 3);
       for (let index = 0; index < 6; index += 1) {
         const angle = ((Math.PI * 2) / 6) * index;
-        const distance = rect.size * (0.06 + (progress * 0.34));
+        const distance = rect.size * (0.06 + (easeOut * 0.38));
         const px = Math.cos(angle) * distance;
         const py = Math.sin(angle) * distance;
-        context.fillStyle = `rgba(255, 218, 163, ${0.42 * (1 - progress)})`;
+        context.fillStyle = `rgba(255, 218, 163, ${0.45 * (1 - easeOut)})`;
         context.beginPath();
-        context.arc(px, py, rect.size * (0.05 + ((1 - progress) * 0.03)), 0, Math.PI * 2);
+        context.arc(px, py, rect.size * (0.06 + ((1 - easeOut) * 0.04)), 0, Math.PI * 2);
         context.fill();
       }
     }
 
     if (effect.type === "mole-hit" || effect.type === "player-hit") {
       context.strokeStyle = effect.type === "player-hit"
-        ? `rgba(255, 128, 128, ${0.55 * (1 - progress)})`
+        ? `rgba(255, 60, 60, ${0.9 * (1 - progress)})`
         : `rgba(255, 238, 180, ${0.55 * (1 - progress)})`;
-      context.lineWidth = Math.max(2, rect.size * 0.035);
+      context.lineWidth = effect.type === "player-hit" ? Math.max(4, rect.size * 0.06) : Math.max(2, rect.size * 0.035);
       context.beginPath();
-      context.arc(0, 0, rect.size * (0.2 + (progress * 0.28)), 0, Math.PI * 2);
+      // Shift down slightly for player hits to wrap around the physical sprite footprint
+      const circleY = effect.type === "player-hit" ? rect.size * 0.24 : 0;
+      context.arc(0, circleY, rect.size * (0.2 + (progress * 0.35)), 0, Math.PI * 2);
       context.stroke();
     }
 
@@ -5055,6 +4942,39 @@ function findActiveMinesMessageForCurrentUser() {
   }) || null;
 }
 
+function loadMiningConfigPreference() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_MINING_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : MINING_DEFAULT_CONFIG;
+  } catch {
+    return MINING_DEFAULT_CONFIG;
+  }
+}
+
+function saveMiningConfigPreference(config) {
+  try {
+    window.localStorage.setItem(LOCAL_MINING_CONFIG_KEY, JSON.stringify(config));
+  } catch (error) {
+    console.warn("Mining config save failed.", error);
+  }
+}
+
+function loadMiningAdminModePreference() {
+  try {
+    return window.localStorage.getItem(LOCAL_MINING_ADMIN_MODE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveMiningAdminModePreference(value) {
+  try {
+    window.localStorage.setItem(LOCAL_MINING_ADMIN_MODE_KEY, String(value));
+  } catch {
+    // Local preferences are best-effort.
+  }
+}
+
 function findActiveDragonMessageForCurrentUser() {
   const messages = getVisibleMessagesForChannel(selectedChannel()?.id);
   return messages.find((message) => {
@@ -5252,9 +5172,7 @@ function syncDragonConfigFromServer(config, { overwriteDraft = true, updatedAtMs
   if (overwriteDraft) {
     state.dragonConfigDraft = normalizeDragonConfig(normalized);
   }
-  if (previousConfig !== nextConfig && userBackdrop.classList.contains("open")) {
-    renderUserModal();
-  }
+  // Admin panel removed — no UI to update for config changes
 }
 
 function mergeDragonSessionWithLocal(currentSession, incomingSession) {
@@ -5607,7 +5525,7 @@ function startDragonTicker() {
       }
       if (!shouldDragonCrash(game)) continue;
       state.interactiveActionLocks[message.id] = true;
-        void performDragonAction(message.id, "dragon_tick")
+      void performDragonAction(message.id, "dragon_tick")
         .finally(() => {
           delete state.interactiveActionLocks[message.id];
         });

@@ -11,11 +11,11 @@ export const MINING_VIEW_RADIUS = 11;
 export const MINING_TILE_SIZE = 36;
 export const MINING_DEFAULT_WALLET_COINS = 500;
 const MINING_MAX_SIMULATION_STEPS = 24;
-const MINING_MAP_BASE_SIZE = 124;
-const MINING_MAP_PLAYER_GROWTH = 8;
-const MINING_MAP_MAX_SIZE = 164;
+const MINING_MAP_BASE_SIZE = 87;
+const MINING_MAP_PLAYER_GROWTH = 6;
+const MINING_MAP_MAX_SIZE = 115;
 const MINING_EFFECT_LIFETIME_MS = 900;
-const MINING_PLAYER_RADIUS = 0.35;
+const MINING_PLAYER_RADIUS = 0.15;
 const MINING_BASE_SPEED = 4.0;
 const MINING_MIN_SPEED = 1.5;
 const MINING_MINE_RANGE = 1.4;
@@ -73,6 +73,22 @@ export const MINING_ORE_DEFS = {
   starsteel: { id: "starsteel", label: "Yildiz Cevheri", color: "#7ff0ff", reward: 180, hardness: 12, requiredTier: 2, moleChance: 0.22 }
 };
 
+export const MINING_DEFAULT_CONFIG = {
+  oreHardness: {
+    stone: 5, coal: 5, copper: 6, iron: 7, amber: 8, sapphire: 9, ruby: 11, starsteel: 12
+  },
+  moleDamageMin: 6,
+  moleDamageMax: 18,
+  playerMaxIntegrity: 100,
+  spawnRevealRadius: 8,
+  mineRevealRadius: 1,
+  moveRevealRadius: 1,
+  baseSpeed: 4.0,
+  minSpeed: 1.5,
+  weightFactor: 12,
+  cooldownFactor: 1.0
+};
+
 export function createMiningProfile(user) {
   return {
     userId: String(user?.id || "user"),
@@ -104,7 +120,7 @@ export function normalizeMiningProfile(profile, user = null) {
   return next;
 }
 
-export function createMiningSession(actor, profile, now = Date.now()) {
+export function createMiningSession(actor, profile, config = MINING_DEFAULT_CONFIG, now = Date.now()) {
   const normalizedProfile = normalizeMiningProfile(profile, actor);
   const session = {
     game: "mining",
@@ -126,7 +142,8 @@ export function createMiningSession(actor, profile, now = Date.now()) {
     effects: [],
     moles: [],
     players: [createLobbyPlayer(actor, normalizedProfile.loadout)],
-    sessionSeed: Math.floor(Math.random() * 1_000_000_000)
+    sessionSeed: Math.floor(Math.random() * 1_000_000_000),
+    config: normalizeMiningConfig(config)
   };
   startMiningRun(session, now);
   return session;
@@ -155,6 +172,7 @@ export function hydrateMiningRuntimeSession(content, now = Date.now()) {
   game.effects = Array.isArray(game.effects) ? game.effects.map((entry) => normalizeMiningEffect(entry, now)).filter(Boolean) : [];
   game.moles = Array.isArray(game.moles) ? game.moles.map((entry) => normalizeMiningMole(entry)).filter(Boolean) : [];
   game.players = Array.isArray(game.players) ? game.players.map((entry) => normalizeMiningPlayer(entry)).filter(Boolean) : [];
+  game.config = normalizeMiningConfig(game.config);
 
   if (!game.isTransportSnapshot && game.status === "lobby") {
     game.joinDeadlineMs = now;
@@ -286,7 +304,7 @@ export function moveMiningPlayer(game, playerId, targetX, targetY, now = Date.no
 
   player.lastAction = "move";
   player.lastActionAtMs = now;
-  player.speed = getPlayerSpeed(player);
+  player.speed = getMiningPlayerSpeed(game, player);
 
   const currentTile = getMiningTile(game.map, Math.floor(player.x), Math.floor(player.y));
   if (currentTile?.kind === "exit") {
@@ -345,9 +363,10 @@ export function mineMiningTile(game, playerId, targetX, targetY, now = Date.now(
     }
   }
   if (now < Number(player.nextActionAtMs || 0)) return { changed: false, reason: "cooldown" };
-  if (getPickaxeTier(player) < Number(tile.requiredTier || 1)) return { changed: false, reason: "pick-tier" };
+  if (!player.isAdminMode && getPickaxeTier(player) < Number(tile.requiredTier || 1)) return { changed: false, reason: "pick-tier" };
 
-  tile.hp = Math.max(0, Number(tile.hp || tile.maxHp || 1) - getPickaxePower(player));
+  const damage = player.isAdminMode ? (tile.hp || tile.maxHp || 1) : (getPickaxePower(player) * (game.config?.cooldownFactor || 1.0));
+  tile.hp = Math.max(0, Number(tile.hp || tile.maxHp || 1) - damage);
   player.facing = getFacingFromDelta(targetX - player.x, targetY - player.y);
   player.lastAction = "mine";
   player.lastActionAtMs = now;
@@ -467,7 +486,7 @@ export function extractMiningPlayer(game, playerId, now = Date.now()) {
   const player = getMiningCurrentPlayer(game, playerId);
   const tile = player ? getMiningTile(game.map, Math.floor(player.x), Math.floor(player.y)) : null;
   if (!player || player.status !== "active") return { changed: false, reason: "inactive" };
-  if (!tile || tile.kind !== "exit") return { changed: false, reason: "not-on-exit" };
+  if (!player.isAdminMode && (!tile || tile.kind !== "exit")) return { changed: false, reason: "not-on-exit" };
 
   player.status = "escaped";
   player.extractedAtMs = now;
@@ -675,6 +694,7 @@ function resolveMiningEventTile(game, eventId, x, y) {
 }
 
 function maybeSpawnMole(game, tile, player, x, y, now) {
+  if (player?.isAdminMode) return false;
   const chance = Math.min(0.65, Number(tile.moleChance || 0) + Math.min(0.25, player.runCoins / 3000));
   if (Math.random() >= chance) return false;
   const spot = findNearestFloor(game.map, x, y);
@@ -684,7 +704,7 @@ function maybeSpawnMole(game, tile, player, x, y, now) {
     x: spot.x,
     y: spot.y,
     hp: 38 + Math.round(chance * 60),
-    damage: 6 + Math.round(chance * 12),
+    damage: (game.config?.moleDamageMin || 6) + Math.round(chance * ((game.config?.moleDamageMax || 18) - (game.config?.moleDamageMin || 6))),
     nextAttackAtMs: now + 1000
   });
   return true;
@@ -698,11 +718,13 @@ function simulateMoleTick(game, now) {
     const distance = euclidean(mole.x + 0.5, mole.y + 0.5, target.x, target.y);
     if (distance <= 1.2) {
       if (now >= Number(mole.nextAttackAtMs || 0)) {
-        target.integrity = Math.max(0, Number(target.integrity || 100) - Number(mole.damage || 8));
-        const stolenCoins = Math.min(target.runCoins, Math.max(4, Math.round((mole.damage || 8) * 1.6)));
-        target.runCoins -= stolenCoins;
-        target.totalWeight = computePlayerWeight(target);
-        target.lastHurtAtMs = now;
+        if (!target.isAdminMode) {
+          target.integrity = Math.max(0, Number(target.integrity || (game.config?.playerMaxIntegrity || 100)) - Number(mole.damage || 8));
+          const stolenCoins = Math.min(target.runCoins, Math.max(4, Math.round((mole.damage || 8) * 1.6)));
+          target.runCoins -= stolenCoins;
+          target.totalWeight = computePlayerWeight(target);
+          target.lastHurtAtMs = now;
+        }
         target.facing = getFacingFromDelta(target.x - mole.x, target.y - mole.y) || target.facing;
         mole.lastAttackAtMs = now;
         mole.nextAttackAtMs = now + 1400;
@@ -750,12 +772,8 @@ function getPlayerThreat(player, mole) {
   return (player.runCoins * 1.2) + ((100 - player.integrity) * 3) + (120 / distance);
 }
 
-function getPlayerSpeed(player) {
-  const coinPenalty = Math.min(MINING_BASE_SPEED - MINING_MIN_SPEED, (player.runCoins || 0) * 0.003);
-  return Math.max(MINING_MIN_SPEED, MINING_BASE_SPEED - coinPenalty);
-}
 
-function advancePlayerPosition(player, map, now) {
+function advancePlayerPosition(game, player, now) {
   if (player.targetX === undefined || player.targetY === undefined) return;
   const dx = player.targetX - player.x;
   const dy = player.targetY - player.y;
@@ -770,7 +788,7 @@ function advancePlayerPosition(player, map, now) {
   const elapsed = Math.max(0, Math.min(1, (now - (player.lastMovedAtMs || now)) / 1000));
   if (elapsed <= 0) { player.lastMovedAtMs = now; return; }
 
-  const speed = getPlayerSpeed(player);
+  const speed = getMiningPlayerSpeed(game, player);
   const maxDist = elapsed * speed;
   const dirX = dx / dist;
   const dirY = dy / dist;
@@ -782,12 +800,12 @@ function advancePlayerPosition(player, map, now) {
   const newX = px + dirX * moveDist;
   const newY = py + dirY * moveDist;
 
-  if (canOccupy(map, newX, newY)) {
+  if (canOccupy(game.map, newX, newY)) {
     px = newX;
     py = newY;
-  } else if (canOccupy(map, newX, py)) {
+  } else if (canOccupy(game.map, newX, py)) {
     px = newX;
-  } else if (canOccupy(map, px, newY)) {
+  } else if (canOccupy(game.map, px, newY)) {
     py = newY;
   }
 
@@ -806,7 +824,7 @@ function advancePlayerPosition(player, map, now) {
 function advanceAllPlayerPositions(game, now) {
   for (const player of (game.players || [])) {
     if (player.status !== "active") continue;
-    advancePlayerPosition(player, game.map, now);
+    advancePlayerPosition(game, player, now);
     const tile = getMiningTile(game.map, Math.floor(player.x), Math.floor(player.y));
     if (tile?.kind === "exit") {
       extractMiningPlayer(game, player.id, now);
@@ -848,7 +866,7 @@ function getPickaxePower(player) {
 function createLobbyPlayer(actor, loadout) {
   return {
     id: String(actor?.id || "user"),
-    name: String(actor?.name || "Oyuncu"),
+    name: String(actor?.displayName || actor?.name || "Oyuncu"),
     status: "queued",
     x: 0,
     y: 0,
@@ -875,7 +893,7 @@ function normalizeMiningPlayer(player) {
   if (!player) return null;
   return {
     id: String(player.id || "user"),
-    name: String(player.name || "Oyuncu"),
+    name: String(player.displayName || player.name || "Oyuncu"),
     status: String(player.status || "queued"),
     x: Math.max(0, Number(player.x || 0)),
     y: Math.max(0, Number(player.y || 0)),
@@ -894,7 +912,8 @@ function normalizeMiningPlayer(player) {
     lastActionTargetY: Math.max(0, Number((player.lastActionTargetY ?? player.y) || 0)),
     lastHurtAtMs: Math.max(0, Math.round(Number(player.lastHurtAtMs || 0))),
     facing: normalizeFacing(player.facing),
-    loadout: normalizeLoadout(player.loadout)
+    loadout: normalizeLoadout(player.loadout),
+    isAdminMode: Boolean(player.isAdminMode)
   };
 }
 
@@ -1245,8 +1264,34 @@ function cloneLoadout(loadout) {
   return normalizeLoadout(loadout);
 }
 
-function computePlayerWeight(player) {
-  return Math.round(Number(player?.runCoins || 0) / 12);
+function computePlayerWeight(player, game = null) {
+  const factor = (game?.config?.weightFactor) || 12;
+  return Math.round(Number(player?.runCoins || 0) / factor);
+}
+
+export function normalizeMiningConfig(config) {
+  const next = structuredClone(config || {});
+  const fallback = MINING_DEFAULT_CONFIG;
+  next.oreHardness = { ...fallback.oreHardness, ...(next.oreHardness || {}) };
+  next.moleDamageMin = Number(next.moleDamageMin ?? fallback.moleDamageMin);
+  next.moleDamageMax = Number(next.moleDamageMax ?? fallback.moleDamageMax);
+  next.playerMaxIntegrity = Number(next.playerMaxIntegrity ?? fallback.playerMaxIntegrity);
+  next.spawnRevealRadius = Number(next.spawnRevealRadius ?? fallback.spawnRevealRadius);
+  next.mineRevealRadius = Number(next.mineRevealRadius ?? fallback.mineRevealRadius);
+  next.moveRevealRadius = Number(next.moveRevealRadius ?? fallback.moveRevealRadius);
+  next.baseSpeed = Number(next.baseSpeed ?? fallback.baseSpeed);
+  next.minSpeed = Number(next.minSpeed ?? fallback.minSpeed);
+  next.weightFactor = Number(next.weightFactor ?? fallback.weightFactor);
+  next.cooldownFactor = Number(next.cooldownFactor ?? fallback.cooldownFactor);
+  return next;
+}
+
+export function getMiningPlayerSpeed(game, player) {
+  const base = game?.config?.baseSpeed || MINING_BASE_SPEED;
+  if (player?.isAdminMode) return base;
+  const min = game?.config?.minSpeed || MINING_MIN_SPEED;
+  const weight = computePlayerWeight(player, game);
+  return Math.max(min, base - (weight * 0.1));
 }
 
 function getOreLabel(oreId) {
