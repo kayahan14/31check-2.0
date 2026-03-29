@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
 import { createServer } from "node:http";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import dragonHandler, { getDragonTransportPayload } from "../api/dragon.js";
 import miningHandler, { getMiningTransportPayload } from "../api/mining.js";
@@ -8,7 +10,8 @@ import { attachRealtimeServer, registerRealtimeProvider } from "./realtime.js";
 import { appendMessage, listScopeChannels, updateMessage } from "./storage.js";
 import { ensureTables, getPool } from "./db.js";
 
-dotenv.config();
+const __dirname = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: join(__dirname, "..", ".env") });
 const app = express();
 const port = Number(process.env.PORT || 3001);
 const allowedOrigins = String(process.env.CORS_ORIGIN || "https://31check-2-0.vercel.app,http://localhost:5173,http://127.0.0.1:5173")

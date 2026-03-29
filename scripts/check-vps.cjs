@@ -4,12 +4,17 @@ const conn = new Client();
 conn.on("ready", () => {
   console.log("[ssh] Connected to VPS");
   const commands = [
-    "cd /opt/31check",
-    "git pull",
-    "npm install --omit=dev",
-    "pm2 restart 31check-mining --update-env",
-    "sleep 2",
-    "pm2 logs 31check-mining --lines 15 --nostream",
+    // Clear old logs and get fresh ones
+    "pm2 flush 31check-mining",
+    "pm2 restart 31check-mining",
+    "sleep 3",
+    "cat /root/.pm2/logs/31check-mining-out.log",
+    "echo '=== STDERR ==='",
+    "cat /root/.pm2/logs/31check-mining-error.log",
+    // Also test the health endpoint
+    "echo '=== HEALTH ==='",
+    "curl -s http://localhost:3001/api/health",
+    "echo",
     "echo ===DONE==="
   ].join(" && ");
 
