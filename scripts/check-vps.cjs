@@ -4,17 +4,16 @@ const conn = new Client();
 conn.on("ready", () => {
   console.log("[ssh] Connected to VPS");
   const commands = [
-    // Clear old logs and get fresh ones
-    "pm2 flush 31check-mining",
-    "pm2 restart 31check-mining",
-    "sleep 3",
-    "cat /root/.pm2/logs/31check-mining-out.log",
-    "echo '=== STDERR ==='",
-    "cat /root/.pm2/logs/31check-mining-error.log",
-    // Also test the health endpoint
+    "echo '=== PM2 STATUS ==='",
+    "pm2 list",
     "echo '=== HEALTH ==='",
     "curl -s http://localhost:3001/api/health",
     "echo",
+    "echo '=== LAST 5 LOGS ==='",
+    "pm2 logs 31check-mining --lines 5 --nostream",
+    "echo '=== DB TABLES ==='",
+    "PGPASSWORD='z7hHwSV3evOYt1XQj2E4yPbL' psql -U thirtyone_app -d thirtyone_db -h 127.0.0.1 -c \"SELECT tablename, (SELECT count(*) FROM public.messages) as msg_count FROM pg_tables WHERE schemaname='public' AND tablename='messages';\"",
+    "PGPASSWORD='z7hHwSV3evOYt1XQj2E4yPbL' psql -U thirtyone_app -d thirtyone_db -h 127.0.0.1 -c \"SELECT count(*) as sessions FROM mining_sessions; SELECT count(*) as profiles FROM mining_profiles;\"",
     "echo ===DONE==="
   ].join(" && ");
 
